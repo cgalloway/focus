@@ -1,0 +1,3300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- viewport-fit=cover lets the layout reach under the notch/home indicator;
+         the safe-area insets below put the padding back where it's needed.
+         maximum-scale stops iOS zooming the page when an input is focused. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <title>Focus</title>
+    <!-- PWA: inert in Electron (the manifest 404s harmlessly), load-bearing on iOS. -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Focus">
+    <!-- black-translucent = our own background paints under the status bar. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#f8f6f3" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
+    <link rel="apple-touch-icon" href="icon-180.png">
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #f8f6f3; --text: #1a1a1a; --text-secondary: #666;
+            --accent: #2d5a3d; --accent-hover: #1e3d29; --border: #e0ddd8;
+            --card-bg: #ffffff; --shadow: 0 2px 20px rgba(0,0,0,0.04);
+            --complete-bg: #2d5a3d; --complete-text: #fff;
+            --timer-warning: #e07c3e; --timer-danger: #c44536;
+            --ring-track: #ebe7e1;
+            --island-bg: rgba(252, 250, 247, 0.92); --island-border: rgba(0, 0, 0, 0.08);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #1a1a1a; --text: #f0ede8; --text-secondary: #999;
+                --accent: #6db585; --accent-hover: #8cc89e; --border: #2e2e2e;
+                --card-bg: #242424; --shadow: 0 2px 20px rgba(0,0,0,0.3);
+                --complete-bg: #6db585; --complete-text: #1a1a1a;
+                --timer-warning: #f0a040; --timer-danger: #e06050;
+                --ring-track: #2e2e2e;
+                --island-bg: rgba(28, 28, 28, 0.94); --island-border: rgba(255, 255, 255, 0.12);
+            }
+            input, select { background: var(--card-bg) !important; color: var(--text) !important; }
+        }
+        body {
+            font-family: 'DM Sans', sans-serif; background: transparent; color: var(--text);
+            min-height: 100vh; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; padding: clamp(0.25rem, 1vh, 0.85rem);
+            -webkit-app-region: drag;
+        }
+        /* Compact mode: the window shrinks to a floating pill ("island"). The
+           8px body padding must be >= the pill's shadow extent — a shadow
+           larger than the padding gets hard-clipped at the transparent window
+           bounds and draws a visible rectangular line around the island. */
+        body.compact-mode { padding: 8px; justify-content: center; min-height: auto; height: 100vh; overflow: hidden; }
+        .container { width: 100%; max-width: 520px; -webkit-app-region: drag; }
+        .compact-mode .container { max-width: 100%; padding: 0; height: 100%; }
+        /* Anything interactive opts out of the window-drag region so clicks/typing still work. */
+        button, input, select, textarea, a, label, [role="button"],
+        .timer-display, .timer-ring-wrap, .toggle-row,
+        .task-content, .compact-task, .compact-timer,
+        .search-input, .search-result-item, .session-action-btn,
+        .ctx-btn, .compact-btn, .timer-icon-btn, .empty-cta,
+        .modal-cancel, .modal-save, .break-btn,
+        .timer-edit-modal, .task-order-modal, .shortcuts-modal {
+          -webkit-app-region: no-drag;
+        }
+
+        /* Compact Bar */
+        .compact-bar {
+            display: none; align-items: center; justify-content: space-between;
+            height: 100%; width: 100%; gap: 0.75%; padding: 0 2.5%;
+            -webkit-app-region: drag;
+            font-size: min(17px, calc(8px + 1.5vw));
+            background: var(--island-bg); border: 1px solid var(--island-border);
+            /* Max extent (offset + blur) must stay within the 8px body padding. */
+            border-radius: 999px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+        .compact-mode .compact-bar { display: flex; animation: viewFadeIn 0.3s ease; }
+        /* display:none → block restarts the animation, so expanding back to the
+           full view fades in too without any JS choreography. */
+        .full-view { animation: viewFadeIn 0.3s ease; }
+        @keyframes viewFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .compact-mode .full-view { display: none; }
+        .compact-bar button, .compact-bar .compact-task, .compact-bar .compact-nav {
+            -webkit-app-region: no-drag;
+        }
+        .compact-timer {
+            font-family: 'Instrument Serif', serif; font-size: 2em;
+            cursor: pointer; min-width: 3.2em; transition: color 0.3s;
+            font-feature-settings: 'tnum' 1, 'lnum' 1;
+            font-variant-numeric: tabular-nums lining-nums;
+        }
+        .compact-timer.warning { color: var(--timer-warning); }
+        .compact-timer.danger { color: var(--timer-danger); }
+        .compact-timer.finished { animation: pulse 1s ease infinite; color: var(--timer-danger); }
+        .compact-timer.break-mode { color: var(--accent); }
+        .compact-task {
+            flex: 1; font-size: 1em; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; color: var(--text); min-width: 0;
+            text-decoration: none; cursor: pointer;
+        }
+        .compact-task:hover { color: var(--accent); }
+        .compact-btn {
+            width: 2em; height: 2em; border-radius: 50%; border: 1px solid var(--border);
+            background: var(--card-bg); cursor: pointer; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .compact-btn:hover { border-color: var(--accent); }
+        .compact-btn svg { width: 1em; height: 1em; stroke: var(--text-secondary); }
+        .compact-btn:hover svg { stroke: var(--accent); }
+        .compact-btn.play-pause { width: 2.4em; height: 2.4em; }
+        .compact-btn.play-pause svg { width: 1.2em; height: 1.2em; }
+        .compact-play-wrap { position: relative; width: 2.9em; height: 2.9em; flex-shrink: 0; -webkit-app-region: no-drag; display: flex; align-items: center; justify-content: center; }
+        .compact-play-wrap .compact-btn.play-pause { width: 2.4em; height: 2.4em; }
+        .compact-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; }
+        .compact-ring-progress { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; transition: stroke-dashoffset 0.6s ease, stroke 0.3s; }
+        .compact-ring-progress.warning { stroke: var(--timer-warning); }
+        .compact-ring-progress.danger { stroke: var(--timer-danger); }
+        .compact-ring-progress.break-mode { stroke: var(--accent); }
+        .compact-btn.active { background: var(--accent); border-color: var(--accent); }
+        .compact-btn.active svg { stroke: white; }
+        .compact-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        /* Drop-from-session button — red on hover so it visually reads as
+           destructive (matches the X in Manage Tasks). */
+        #compactSkip:hover { border-color: var(--timer-danger); background: rgba(196, 69, 54, 0.08); }
+        #compactSkip:hover svg { stroke: var(--timer-danger); }
+        /* Complete button — fills sage on hover, matching the full-view button. */
+        #compactComplete:hover { background: var(--accent); border-color: var(--accent); }
+        #compactComplete:hover svg { stroke: #fff; }
+        .compact-nav { display: flex; gap: 0.3em; }
+        /* Idle island shows only ring + time + task; the rest of the controls
+           fade in on hover (or keyboard focus) like a Dynamic Island. */
+        .compact-bar .compact-nav, .compact-bar #compactSkip,
+        .compact-bar #compactComplete, .compact-bar #compactExpand {
+            opacity: 0; transition: opacity 0.25s;
+        }
+        .compact-bar:hover .compact-nav, .compact-bar:hover #compactSkip,
+        .compact-bar:hover #compactComplete, .compact-bar:hover #compactExpand,
+        .compact-bar:focus-within .compact-nav, .compact-bar:focus-within #compactSkip,
+        .compact-bar:focus-within #compactComplete, .compact-bar:focus-within #compactExpand {
+            opacity: 1;
+        }
+
+        /* Setup Screen */
+        .setup-screen {
+            background: var(--card-bg); border-radius: 16px; padding: 3rem;
+            box-shadow: var(--shadow); border: 1px solid var(--border);
+        }
+        .setup-screen h1 { font-family: 'Instrument Serif', serif; font-size: 2rem; font-weight: 400; margin-bottom: 0.5rem; }
+        .setup-screen p { color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 2rem; line-height: 1.6; }
+        .input-group { margin-bottom: 1.5rem; }
+        .input-group label { display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.5rem; color: var(--text-secondary); }
+        .input-group input {
+            width: 100%; padding: 0.875rem 1rem; border: 1px solid var(--border);
+            border-radius: 8px; font-size: 1rem; font-family: inherit;
+        }
+        .input-group input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(45, 90, 61, 0.1); }
+        .connect-btn {
+            width: 100%; padding: 1rem; background: var(--accent); color: white;
+            border: none; border-radius: 8px; font-size: 1rem; font-weight: 500; cursor: pointer;
+        }
+        .connect-btn:hover { background: var(--accent-hover); }
+        .connect-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .cancel-btn { width: 100%; padding: 0.75rem; background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; cursor: pointer; margin-top: 0.5rem; }
+        .cancel-btn:hover { background: var(--bg); color: var(--text); }
+        .cancel-btn.hidden { display: none; }
+        .help-text { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
+        .help-text a { color: var(--accent); text-decoration: none; }
+        .focus-screen { display: none; text-align: center; }
+        .focus-screen.active { display: block; }
+        .setup-screen.hidden { display: none; }
+
+        /* Timer */
+        .timer-container { margin-bottom: clamp(0.2rem, 0.6vh, 0.5rem); }
+        .pomodoro-dots { display: none; justify-content: center; gap: 0.5rem; margin-bottom: clamp(0.4rem, 1.2vh, 0.85rem); height: 8px; }
+        .pomodoro-dots.active { display: flex; }
+        .pomodoro-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.3s; }
+        .pomodoro-dot.filled { background: var(--accent); }
+        .timer-ring-wrap { position: relative; width: clamp(220px, 38vh, 400px); height: clamp(220px, 38vh, 400px); margin: 0 auto; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-app-region: no-drag; }
+        .timer-ring { position: absolute; inset: 0; transform: rotate(-90deg); pointer-events: none; }
+        .timer-ring-track { fill: none; stroke: var(--ring-track); stroke-width: 3; }
+        .timer-ring-progress { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 0.6s ease, stroke 0.3s; }
+        .timer-ring-progress.warning { stroke: var(--timer-warning); }
+        .timer-ring-progress.danger { stroke: var(--timer-danger); }
+        .timer-ring-progress.break-mode { stroke: var(--accent); }
+        .timer-display {
+            font-family: 'Instrument Serif', serif; font-size: clamp(3.8rem, 10.5vh, 8rem); color: var(--text);
+            letter-spacing: -0.02em; cursor: pointer; user-select: none; transition: color 0.3s;
+            position: relative; z-index: 1;
+            font-feature-settings: 'tnum' 1, 'lnum' 1;
+            font-variant-numeric: tabular-nums lining-nums;
+        }
+        .timer-display .colon, .compact-timer .colon { transition: opacity 0.4s; display: inline-block; text-align: center; }
+        .timer-display.running .colon, .compact-timer.running .colon { animation: timerBlink 1.6s ease-in-out infinite; }
+        @keyframes timerBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+        /* Instrument Serif lacks an OpenType tabular-num feature, so we force
+           every digit into the width of "0" with the ch unit. Stops the timer
+           text from re-laying out as digits change. */
+        .timer-display .digit, .compact-timer .digit { display: inline-block; width: 1ch; text-align: center; }
+        .timer-display:hover { color: var(--accent); }
+        .timer-display.warning { color: var(--timer-warning); }
+        .timer-display.danger { color: var(--timer-danger); }
+        .timer-display.break-mode { color: var(--accent); }
+        .timer-display.paused { opacity: 0.5; }
+        .timer-display.finished { animation: pulse 1s ease infinite; color: var(--timer-danger); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .timer-controls { display: flex; justify-content: center; align-items: center; gap: 0.4rem; margin-top: clamp(0.25rem, 0.6vh, 0.5rem); }
+        .timer-icon-btn { background: transparent; border: none; cursor: pointer; padding: 0; color: var(--text-secondary); border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; -webkit-app-region: no-drag; transition: color 0.2s, background 0.2s, border-color 0.2s; }
+        .timer-icon-btn:hover { color: var(--accent); background: rgba(45, 90, 61, 0.08); }
+        .timer-icon-btn svg { width: 15px; height: 15px; }
+        .timer-icon-btn.primary { width: 44px; height: 44px; border: 1px solid var(--border); color: var(--accent); }
+        .timer-icon-btn.primary svg { width: 18px; height: 18px; }
+        .timer-icon-btn.primary:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .timer-icon-btn.primary.running { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+        /* Modals */
+        .timer-edit-overlay, .task-order-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center;
+        }
+        .timer-edit-overlay.active, .task-order-overlay.active, .break-overlay.active { display: flex; }
+        .break-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(45, 90, 61, 0.95); z-index: 100; align-items: center; justify-content: center;
+        }
+        .break-modal { text-align: center; color: white; padding: 2rem; }
+        .break-icon { font-size: 4rem; margin-bottom: 1rem; }
+        .break-modal p { font-size: 1.25rem; margin-bottom: 2rem; line-height: 1.5; max-width: 300px; }
+        .break-buttons { display: flex; flex-direction: column; gap: 0.75rem; }
+        .break-btn { padding: 1rem 2rem; border-radius: 8px; font-size: 1rem; font-family: inherit; cursor: pointer; }
+        .break-btn.start-break { background: white; color: var(--accent); border: none; }
+        .break-btn.start-break:hover { background: #f0f0f0; }
+        .break-btn.skip-break { background: transparent; color: white; border: 1px solid rgba(255,255,255,0.5); }
+        .break-btn.skip-break:hover { border-color: white; }
+        /* Compact break overlay — match the island's pill shape so the green
+           fill doesn't paint square corners over the transparent window. */
+        .compact-mode .break-overlay {
+            align-items: stretch;
+            top: 8px; left: 8px; right: 8px; bottom: 8px;
+            border-radius: 999px; overflow: hidden;
+        }
+        .compact-mode .shortcuts-overlay, .compact-mode .timer-edit-overlay, .compact-mode .task-order-overlay {
+            top: 8px; left: 8px; right: 8px; bottom: 8px;
+            border-radius: 999px; overflow: hidden;
+        }
+        .compact-mode .break-modal {
+            display: flex; align-items: center; justify-content: center;
+            gap: 1rem; padding: 0 2%; width: 100%;
+            -webkit-app-region: drag;
+        }
+        .compact-mode .break-icon { font-size: 1.5em; margin: 0; }
+        .compact-mode .break-modal p {
+            font-size: calc(7px + 1.2vw); margin: 0; max-width: none;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .compact-mode .break-buttons {
+            flex-direction: row; gap: 0.5rem; flex-shrink: 0;
+            -webkit-app-region: no-drag;
+        }
+        .compact-mode .break-btn {
+            padding: 0.4em 0.8em; font-size: calc(6px + 1vw);
+            border-radius: 6px; white-space: nowrap;
+        }
+        .timer-edit-modal, .task-order-modal {
+            background: var(--card-bg); border-radius: 16px; padding: 2rem;
+            width: 90%; max-width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            -webkit-app-region: no-drag;
+        }
+        .task-order-modal { max-width: 680px; width: 92%; max-height: 90vh; display: flex; flex-direction: column; padding: 1.5rem; }
+        .timer-edit-modal h3, .task-order-modal h3 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 1.25rem; margin-bottom: 1rem; text-align: center; }
+        .search-section { margin-bottom: 1rem; }
+        .search-input { width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.95rem; font-family: inherit; }
+        .search-input:focus { outline: none; border-color: var(--accent); }
+        .search-results { max-height: 180px; overflow-y: auto; margin-top: 0.5rem; }
+        .search-result-item.keyboard-selected { border-color: var(--accent); background: rgba(45, 90, 61, 0.05); }
+        .search-results:empty { display: none; }
+        .search-result-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: var(--card-bg); border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; border: 1px solid var(--border); }
+        .search-result-item:hover { border-color: var(--accent); background: rgba(45, 90, 61, 0.05); }
+        .search-result-item.in-session { opacity: 0.5; cursor: default; }
+        .search-result-item.in-session:hover { border-color: var(--border); background: var(--card-bg); }
+        .search-result-content { flex: 1; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .search-result-meta { font-size: 0.7rem; color: var(--text-secondary); flex-shrink: 0; text-align: right; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .search-result-add { color: var(--accent); font-size: 1.2rem; flex-shrink: 0; }
+        .session-divider { font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; padding: 0.5rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; }
+        .session-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; }
+        .session-actions .session-divider { border-bottom: none; padding: 0; margin: 0; }
+        .session-action-buttons { display: flex; gap: 0.4rem; }
+        .session-action-btn { font-size: 0.7rem; padding: 0.35rem 0.65rem; border: 1px solid var(--border); background: var(--card-bg); border-radius: 6px; cursor: pointer; color: var(--text-secondary); font-family: inherit; letter-spacing: 0.02em; white-space: nowrap; }
+        .session-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .session-action-btn.danger:hover { border-color: var(--timer-danger); color: var(--timer-danger); }
+        .session-action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .search-loading { text-align: center; padding: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
+        .search-empty { text-align: center; padding: 1rem; color: var(--text-secondary); font-size: 0.9rem; }
+        .time-inputs { display: flex; justify-content: center; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
+        .time-inputs input { width: 70px; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1.5rem; font-family: 'Instrument Serif', serif; text-align: center; }
+        .time-inputs input:focus { outline: none; border-color: var(--accent); }
+        .time-inputs span { font-size: 1.5rem; color: var(--text-secondary); }
+        .modal-buttons { display: flex; gap: 0.75rem; }
+        .modal-buttons button { flex: 1; padding: 0.75rem; border-radius: 8px; font-size: 0.95rem; font-family: inherit; cursor: pointer; }
+        .modal-cancel { border: 1px solid var(--border); background: var(--card-bg); color: var(--text-secondary); }
+        .modal-save { border: none; background: var(--accent); color: white; }
+        .modal-save:hover { background: var(--accent-hover); }
+
+        /* Task block (single line, no card) */
+        .task-block {
+            margin: clamp(0.4rem, 1vh, 0.85rem) auto clamp(0.2rem, 0.5vh, 0.4rem);
+            text-align: center; padding: 0 1rem;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        .task-block.completing { opacity: 0.25; transform: translateX(-12px); }
+        .task-block-row { display: flex; align-items: center; justify-content: center; gap: 0.55rem; flex-wrap: wrap; }
+        .task-project-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+        .task-content {
+            font-family: 'Instrument Serif', serif; font-size: clamp(1.6rem, 3.5vh, 2.6rem); line-height: 1.3; font-weight: 400;
+            text-decoration: none; color: var(--text); cursor: pointer; transition: color 0.2s;
+        }
+        .task-content:hover { color: var(--accent); }
+        .task-due { margin-top: 0.3rem; font-size: 0.88rem; color: var(--text-secondary); }
+        .task-due.overdue { color: var(--timer-danger); }
+
+        /* ---- Per-task time goals (challenge timer) ---- */
+        /* Chip under the current task. Clicking the body opens the editor;
+           clicking the mini-switch flips the goal on/off without a round trip
+           through the modal. */
+        .goal-chip {
+            margin-top: 0.45rem; display: inline-flex; align-items: center; gap: 0.4rem;
+            border-radius: 999px; padding: 0.26rem 0.55rem 0.26rem 0.7rem; font-size: 0.8rem;
+            font-family: inherit; cursor: pointer; -webkit-app-region: no-drag;
+            border: 1px solid transparent; user-select: none;
+            transition: color 0.2s, border-color 0.2s, background 0.2s, opacity 0.2s;
+        }
+        .goal-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+        .goal-chip.on { background: rgba(45, 90, 61, 0.1); color: var(--accent); }
+        .goal-chip.on:hover { background: rgba(45, 90, 61, 0.18); }
+        .goal-chip.off { color: var(--text-secondary); border-color: var(--border); }
+        .goal-chip.off:hover { color: var(--accent); border-color: var(--accent); }
+        .goal-chip.unset { color: var(--text-secondary); border: 1px dashed var(--border); opacity: 0.65; padding-right: 0.7rem; }
+        .goal-chip.unset:hover { color: var(--accent); border-color: var(--accent); opacity: 1; }
+        .goal-chip.beat { color: var(--accent); }
+        .goal-chip.over { background: rgba(196, 69, 54, 0.1); color: var(--timer-danger); }
+        .goal-spent { opacity: 0.75; font-variant-numeric: tabular-nums; }
+        /* Miniature version of .toggle-slider, sized to sit inside the chip. */
+        .mini-switch {
+            width: 24px; height: 13px; border-radius: 999px; background: var(--border);
+            position: relative; flex-shrink: 0; transition: background 0.2s;
+        }
+        .mini-switch::after {
+            content: ''; position: absolute; width: 9px; height: 9px; border-radius: 50%;
+            background: #fff; top: 2px; left: 2px; transition: transform 0.2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+        }
+        .mini-switch.on { background: var(--accent); }
+        .mini-switch.on::after { transform: translateX(11px); }
+
+        /* Goal editor modal */
+        .goal-overlay { z-index: 101; }
+        .goal-task-name {
+            font-size: 0.85rem; color: var(--text-secondary); text-align: center;
+            margin: -0.5rem 0 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        /* Wider than the plain timer editor so all five presets sit on one row. */
+        .goal-overlay .timer-edit-modal { max-width: 360px; }
+        .goal-presets { display: flex; gap: 0.3rem; justify-content: center; margin-bottom: 0.9rem; }
+        .goal-preset {
+            flex: 1 1 0; min-width: 0; padding: 0.35rem 0.2rem;
+            border: 1px solid var(--border); background: var(--card-bg);
+            border-radius: 999px; font-size: 0.8rem; font-family: inherit; color: var(--text-secondary); cursor: pointer;
+        }
+        .goal-preset:hover { border-color: var(--accent); color: var(--accent); }
+        .goal-preset.selected { border-color: var(--accent); color: var(--accent); background: rgba(45, 90, 61, 0.08); }
+        .goal-remove {
+            width: 100%; margin-top: 0.7rem; background: transparent; border: none;
+            color: var(--timer-danger); font-size: 0.8rem; cursor: pointer; font-family: inherit; padding: 0.25rem;
+        }
+        .goal-remove:hover { text-decoration: underline; }
+        .goal-remove.hidden { display: none; }
+        /* Dimmed, but still editable — you can set the length now and switch it on later. */
+        .goal-disabled { opacity: 0.45; }
+
+        /* Per-row goal button in Manage Tasks */
+        .task-goal-btn {
+            height: 24px; min-width: 24px; padding: 0 7px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--card-bg); cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 3px;
+            flex-shrink: 0; margin-left: 6px; font-size: 0.7rem; font-family: inherit;
+            color: var(--text-secondary); white-space: nowrap;
+        }
+        .task-goal-btn svg { width: 12px; height: 12px; stroke: currentColor; }
+        .task-goal-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .task-goal-btn.on { border-color: var(--accent); color: var(--accent); background: rgba(45, 90, 61, 0.08); }
+        .task-goal-btn.paused { border-style: dashed; }
+        /* Overtime — the countdown has passed zero and is now counting up. */
+        .timer-display.overtime, .compact-timer.overtime { color: var(--timer-danger); }
+
+        /* Context bar — Mac-toolbar style row of icon-only actions */
+        .task-context-bar { display: flex; align-items: center; justify-content: center; gap: 0.25rem; margin-top: 0; }
+        .ctx-btn {
+            width: 36px; height: 36px; border-radius: 50%; border: 1px solid transparent;
+            background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: var(--text-secondary); transition: color 0.2s, background 0.2s, border-color 0.2s;
+        }
+        .ctx-btn:hover { color: var(--accent); background: rgba(45, 90, 61, 0.08); }
+        .ctx-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .ctx-btn:disabled:hover { color: var(--text-secondary); background: transparent; }
+        .ctx-btn svg { width: 18px; height: 18px; }
+        .ctx-spacer { width: 0.6rem; }
+        .ctx-btn-complete { border: 1px solid var(--border); }
+        .ctx-btn-complete:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .ctx-btn-drop:hover { color: var(--timer-danger); background: rgba(196, 69, 54, 0.08); }
+
+        /* Empty state — quiet, human */
+        .empty-state { padding: clamp(2rem, 6vh, 4rem) 1.5rem; text-align: center; }
+        .empty-quote { font-family: 'Instrument Serif', serif; font-style: italic; font-size: clamp(1.1rem, 2.4vh, 1.5rem); color: var(--text); margin-bottom: 1.25rem; line-height: 1.5; }
+        .empty-cta { padding: 0.55rem 1.1rem; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); border-radius: 999px; cursor: pointer; font-family: inherit; font-size: 0.85rem; transition: color 0.2s, border-color 0.2s; -webkit-app-region: no-drag; }
+        .empty-cta:hover { color: var(--accent); border-color: var(--accent); }
+        .loading { display: flex; justify-content: center; padding: 4rem; }
+        .spinner { width: 32px; height: 32px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .filter-section { margin-bottom: 1.5rem; }
+        .filter-section select { width: 100%; padding: 0.875rem 1rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; font-family: inherit; background: white; cursor: pointer; }
+        .filter-section select:focus { outline: none; border-color: var(--accent); }
+        .settings-toggles { margin-bottom: 1.5rem; }
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 0; cursor: pointer; position: relative; }
+        .toggle-row span:first-child { font-size: 0.95rem; color: var(--text); }
+        .toggle-row input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .toggle-slider { width: 44px; height: 24px; background: var(--border); border-radius: 12px; position: relative; transition: background 0.2s; flex-shrink: 0; }
+        .toggle-slider::after { content: ''; position: absolute; width: 20px; height: 20px; background: white; border-radius: 50%; top: 2px; left: 2px; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .toggle-row input:checked + .toggle-slider { background: var(--accent); }
+        .toggle-row input:checked + .toggle-slider::after { transform: translateX(20px); }
+        .toggle-hint { font-size: 0.8rem; color: var(--text-secondary); margin: 0.25rem 0 0.5rem; line-height: 1.4; }
+        .pomodoro-settings { margin: 0.5rem 0 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 8px; }
+        .pomodoro-duration-row { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0; }
+        .pomodoro-duration-row label { font-size: 0.85rem; color: var(--text-secondary); }
+        .duration-input-group { display: flex; align-items: center; gap: 0.4rem; }
+        .duration-input-group input { width: 50px; padding: 0.4rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; text-align: center; font-family: inherit; }
+        .duration-input-group input:focus { outline: none; border-color: var(--accent); }
+        .duration-input-group span { font-size: 0.8rem; color: var(--text-secondary); }
+        .focus-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin-bottom: clamp(0.25rem, 1vh, 0.75rem); padding-top: clamp(4px, 1vh, 14px); }
+        .focus-header > :first-child { justify-self: start; }
+        .focus-header > :last-child { justify-self: end; }
+        .focus-header .task-counter { justify-self: center; }
+        .header-btn {
+            width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border);
+            background: var(--card-bg); cursor: pointer; display: flex; align-items: center; justify-content: center;
+            opacity: 0.18; transition: opacity 0.25s, border-color 0.2s;
+        }
+        body:hover .header-btn { opacity: 1; }
+        .header-btn:hover { border-color: var(--accent); opacity: 1; }
+        .header-btn svg { width: 18px; height: 18px; stroke: var(--text-secondary); }
+        .task-counter { font-size: 0.9rem; color: var(--text-secondary); }
+        .stats-line { margin-top: 0.35rem; font-size: 0.85rem; color: var(--text-secondary); text-align: center; min-height: 1.2em; }
+        .task-list { flex: 1 1 auto; overflow-y: auto; margin-bottom: 1rem; min-height: 240px; padding-top: 4px; }
+        .task-item {
+            display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1rem;
+            background: var(--bg); border-radius: 8px; margin-bottom: 0.5rem; cursor: grab; border: 2px solid transparent;
+            position: relative;
+        }
+        .task-item:hover { border-color: var(--accent); }
+        .task-item.dragging { opacity: 0.5; }
+        .task-item.drag-over-top::before { content: ''; position: absolute; top: -2px; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: 2px; }
+        .task-item.drag-over-bottom::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: var(--accent); border-radius: 2px; }
+        .task-item.current { border-color: var(--accent); background: rgba(45, 90, 61, 0.05); }
+        .drag-handle { color: var(--text-secondary); flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+        .task-item:hover .drag-handle, .task-item.dragging .drag-handle { opacity: 1; }
+        .drag-handle svg { width: 16px; height: 16px; }
+        .task-item-content { flex: 1; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .task-item-project { font-size: 0.75rem; color: var(--text-secondary); flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .task-item-labels { display: flex; gap: 3px; flex-shrink: 1; overflow: hidden; max-width: 180px; }
+        .task-label-pill { background: rgba(45, 90, 61, 0.12); color: var(--accent); font-size: 0.7rem; padding: 2px 7px; border-radius: 10px; white-space: nowrap; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+        .search-result-labels { display: inline-flex; gap: 3px; margin-left: 4px; vertical-align: middle; }
+        .task-remove-btn {
+            width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border);
+            background: var(--card-bg); cursor: pointer; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0; margin-left: 8px;
+        }
+        .task-remove-btn:hover { border-color: var(--timer-danger); background: rgba(196, 69, 54, 0.1); }
+        .task-remove-btn svg { width: 14px; height: 14px; stroke: var(--text-secondary); }
+        .task-remove-btn:hover svg { stroke: var(--timer-danger); }
+        /* Completion checkbox — leads the row so it reads as "tick this off",
+           and is visually the opposite of the destructive × that trails it. */
+        .task-done-btn {
+            width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border);
+            background: transparent; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0; margin-right: 10px;
+            padding: 0; transition: border-color 0.15s, background 0.15s;
+        }
+        .task-done-btn svg { width: 13px; height: 13px; stroke: transparent; transition: stroke 0.15s; }
+        .task-done-btn:hover { border-color: var(--accent); background: rgba(45, 90, 61, 0.08); }
+        .task-done-btn:hover svg { stroke: var(--accent); }
+        .task-done-btn:disabled { opacity: 0.4; cursor: default; }
+        /* Touch devices get no hover, so show a faint tick as the affordance. */
+        @media (pointer: coarse) {
+            .task-done-btn { width: 26px; height: 26px; }
+            .task-done-btn svg { stroke: var(--text-secondary); }
+        }
+        .close-modal-btn { width: 100%; padding: 0.875rem; border: none; background: var(--accent); color: white; border-radius: 8px; font-size: 0.95rem; font-family: inherit; cursor: pointer; }
+        .close-modal-btn:hover { background: var(--accent-hover); }
+        @keyframes celebrate { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        .celebrate { animation: celebrate 0.4s ease; }
+        @media (max-width: 480px) { .task-content { font-size: 1.5rem; } .timer-display { font-size: 3.5rem; } .task-card { padding: 2rem; } .timer-ring-wrap { width: 200px; height: 200px; } }
+
+        /* Toast notification — bottom-center pill, readable at compact 60px height */
+        .toast-container {
+            position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+            z-index: 200; pointer-events: none; -webkit-app-region: no-drag;
+        }
+        .toast-pill {
+            background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
+            box-shadow: var(--shadow); border-radius: 999px;
+            padding: 5px 14px; font-size: 12px; font-family: inherit; white-space: nowrap;
+            opacity: 0; transition: opacity 0.2s ease;
+        }
+        .toast-pill.visible { opacity: 1; }
+
+        /* Day-rollover prompt — bottom-center pill like the toast, but interactive */
+        .rollover-prompt {
+            position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+            z-index: 201; -webkit-app-region: no-drag;
+            display: flex; align-items: center; gap: 0.6rem;
+            background: var(--card-bg); border: 1px solid var(--border); border-radius: 999px;
+            box-shadow: var(--shadow); color: var(--text-secondary); font-size: 0.85rem;
+            padding: 0.5rem 0.9rem; white-space: nowrap;
+            opacity: 0; pointer-events: none; transition: opacity 0.25s;
+        }
+        .rollover-prompt.visible { opacity: 1; pointer-events: auto; }
+        .rollover-btn {
+            background: transparent; border: 1px solid var(--border); border-radius: 999px;
+            padding: 0.25rem 0.7rem; font-size: 0.8rem; font-family: inherit;
+            color: var(--text-secondary); cursor: pointer;
+        }
+        .rollover-btn.primary { color: var(--accent); border-color: var(--accent); }
+        .compact-mode .rollover-prompt { display: none; }
+
+        /* Keyboard shortcuts overlay */
+        .shortcuts-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+        .shortcuts-overlay.active { display: flex; }
+        .shortcuts-modal { background: var(--card-bg); border-radius: 16px; padding: 2rem; width: 90%; max-width: 360px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); -webkit-app-region: no-drag; }
+        .shortcuts-modal h3 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 1.25rem; margin-bottom: 1rem; text-align: center; }
+        .shortcuts-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.7rem 1.25rem; margin: 0 0 1.25rem; font-size: 0.9rem; align-items: center; }
+        .shortcuts-list dt { display: flex; gap: 0.3rem; }
+        .shortcuts-list dd { color: var(--text-secondary); }
+        kbd { font-family: 'DM Sans', sans-serif; font-size: 0.72rem; padding: 0.18rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); min-width: 1.6rem; text-align: center; box-shadow: 0 1px 0 var(--border); display: inline-block; line-height: 1; }
+
+        /* ==================================================================
+           WEB / iOS PWA
+           `html.is-web` is set by JS when window.focusAPI is absent. Everything
+           here is scoped to it so the Electron build is bit-for-bit unaffected.
+           ================================================================== */
+
+        /* Electron paints the window with native vibrancy and leaves the page
+           transparent. A browser has nothing behind it, so the page must paint
+           its own background or you get white-on-white in light mode. */
+        html.is-web, html.is-web body { background: var(--bg); }
+        html.is-web body {
+            /* dvh tracks Safari's collapsing URL bar; vh is the fallback. */
+            min-height: 100vh; min-height: 100dvh;
+            /* Stop the whole page rubber-banding when you drag on the timer. */
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Window dragging is an Electron concept; on web it just blocks text
+           selection and makes long-press feel broken. */
+        html.is-web body, html.is-web .container, html.is-web .compact-bar { -webkit-app-region: no-drag; }
+
+        /* Compact mode resizes the native window — meaningless in a browser. */
+        html.is-web #compactBtn { display: none; }
+
+        /* Touch phones: no hardware keyboard, so the shortcuts panel is noise. */
+        @media (pointer: coarse) {
+            html.is-web #shortcutsBtn { display: none; }
+        }
+
+        @media (max-width: 600px) {
+            html.is-web body {
+                /* Respect the notch and the home indicator. */
+                padding: max(0.5rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+                         max(0.5rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+                justify-content: flex-start;
+            }
+            html.is-web .container { max-width: 100%; }
+            /* Give the thumb a real target — Apple's floor is 44px. */
+            html.is-web .header-btn,
+            html.is-web .timer-icon-btn { min-width: 44px; min-height: 44px; }
+            html.is-web .timer-icon-btn.primary { width: 56px; height: 56px; }
+            html.is-web .timer-icon-btn.primary svg { width: 22px; height: 22px; }
+            html.is-web .rollover-btn,
+            html.is-web .session-action-btn { min-height: 40px; }
+            /* Modals become near-full-screen sheets rather than tiny centered cards. */
+            html.is-web .shortcuts-modal,
+            html.is-web .task-order-modal,
+            html.is-web .timer-edit-modal { width: 100%; max-width: 100%; max-height: 88dvh; }
+            /* 16px is the threshold below which iOS zooms the page on focus. */
+            html.is-web input, html.is-web select, html.is-web textarea { font-size: 16px; }
+        }
+
+        /* Lock-screen alert settings */
+        .push-settings { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 1rem; }
+        .field-hint { color: var(--text-secondary); font-weight: 400; font-size: 0.8em; }
+        .push-status {
+            font-size: 0.82rem; color: var(--text-secondary); margin: 0.5rem 0 0.7rem;
+            line-height: 1.45;
+        }
+        .push-status.on { color: var(--accent); }
+        .push-status.warn { color: var(--timer-warning); }
+        .push-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+
+        /* Full-screen confetti canvas — Electron gets its own overlay window,
+           the web build has to draw in-page. */
+        #webConfetti {
+            position: fixed; inset: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 9999; display: none;
+        }
+        html.is-web #webConfetti.firing { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="webConfetti"></canvas>
+    <div class="container">
+        <!-- Compact Bar -->
+        <div class="compact-bar">
+            <div class="compact-timer" id="compactTimer">25:00</div>
+            <div class="compact-play-wrap">
+                <button class="compact-btn play-pause" id="compactPlayPause" title="Start/Pause">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" id="compactPlayIcon"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+                </button>
+                <svg class="compact-ring" viewBox="0 0 36 36">
+                    <circle class="compact-ring-progress" id="compactRingProgress" cx="18" cy="18" r="17"/>
+                </svg>
+            </div>
+            <a class="compact-task" id="compactTask" title="Open in Todoist">No task selected</a>
+            <div class="compact-nav">
+                <button class="compact-btn" id="compactPrev" title="Previous task">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                </button>
+                <button class="compact-btn" id="compactNext" title="Next task">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+            <button class="compact-btn" id="compactSkip" title="Drop task from session">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <button class="compact-btn" id="compactComplete" title="Complete task">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            </button>
+            <button class="compact-btn" id="compactExpand" title="Expand">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+            </button>
+        </div>
+
+        <!-- Full View -->
+        <div class="full-view">
+            <div class="setup-screen" id="setupScreen">
+                <h1>Focus</h1>
+                <p>Connect your Todoist account to focus on one task at a time. Complete tasks here and they sync back to Todoist.</p>
+                <div class="input-group">
+                    <label for="apiToken">Todoist API Token</label>
+                    <input type="password" id="apiToken" placeholder="Paste your API token here">
+                </div>
+                <div class="filter-section">
+                    <label for="filterSelect">Show tasks from</label>
+                    <select id="filterSelect"><option value="">All projects (Today & Overdue)</option></select>
+                </div>
+                <div class="settings-toggles">
+                    <label class="toggle-row">
+                        <span>Sound notifications</span>
+                        <input type="checkbox" id="soundToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <label class="toggle-row">
+                        <span>Pomodoro mode</span>
+                        <input type="checkbox" id="pomodoroToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <label class="toggle-row" title="When on, a task's Todoist duration presets the timer; when off, every task uses the work session length">
+                        <span>Use task time estimates</span>
+                        <input type="checkbox" id="taskDurationToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <div class="pomodoro-settings" id="pomodoroSettings" style="display:none;">
+                        <div class="pomodoro-duration-row">
+                            <label for="workDuration">Work session</label>
+                            <div class="duration-input-group">
+                                <input type="number" id="workDuration" min="1" max="120" value="25">
+                                <span>min</span>
+                            </div>
+                        </div>
+                        <div class="pomodoro-duration-row">
+                            <label for="shortBreakDuration">Short break</label>
+                            <div class="duration-input-group">
+                                <input type="number" id="shortBreakDuration" min="1" max="30" value="5">
+                                <span>min</span>
+                            </div>
+                        </div>
+                        <div class="pomodoro-duration-row">
+                            <label for="longBreakDuration">Long break (every 4)</label>
+                            <div class="duration-input-group">
+                                <input type="number" id="longBreakDuration" min="1" max="60" value="15">
+                                <span>min</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Lock-screen alerts. Hidden in the desktop app, which posts its
+                     notifications directly and never needs a scheduler. -->
+                <div class="push-settings" id="pushSettings" style="display:none;">
+                    <div class="input-group">
+                        <label for="pushUrl">Push server URL <span class="field-hint">for lock screen alerts</span></label>
+                        <input type="url" id="pushUrl" placeholder="https://focus-push.you.workers.dev" autocapitalize="off" autocorrect="off" spellcheck="false">
+                    </div>
+                    <div class="input-group">
+                        <label for="pushKey">Push server key</label>
+                        <input type="password" id="pushKey" placeholder="The FOCUS_KEY secret you set">
+                    </div>
+                    <div class="push-status" id="pushStatus">Alerts off</div>
+                    <div class="push-actions">
+                        <button type="button" class="session-action-btn" id="pushEnableBtn">Turn on alerts</button>
+                        <button type="button" class="session-action-btn" id="pushTestBtn">Send test</button>
+                    </div>
+                </div>
+                <button class="connect-btn" id="connectBtn">Connect & Start Focusing</button>
+                <button class="cancel-btn hidden" id="cancelSettingsBtn">Cancel — back to tasks</button>
+                <div class="help-text">
+                    Find your API token in Todoist: Settings → Integrations → Developer → API token.
+                    <br><br>
+                    <a href="https://todoist.com/app/settings/integrations/developer" target="_blank">Open Todoist Settings →</a>
+                </div>
+            </div>
+            <div class="focus-screen" id="focusScreen">
+                <div class="focus-header">
+                    <button class="header-btn" id="reorderBtn" title="Reorder tasks">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                    </button>
+                    <span class="task-counter" id="taskCounter"></span>
+                    <div style="display:flex;gap:8px;">
+                        <button class="header-btn" id="shortcutsBtn" title="Keyboard shortcuts (?)">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8.228 9.247a4 4 0 117.544 1.781c-.353.83-1.156 1.371-1.79 2.005-.633.633-1.482 1.42-1.482 2.467M12 18h.01"/></svg>
+                        </button>
+                        <button class="header-btn" id="compactBtn" title="Compact mode">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 12H4"/></svg>
+                        </button>
+                        <button class="header-btn" id="settingsBtn" title="Settings">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="timer-container">
+                    <div class="pomodoro-dots" id="pomodoroDots"></div>
+                    <div class="timer-ring-wrap">
+                        <svg class="timer-ring" viewBox="0 0 240 240">
+                            <circle class="timer-ring-track" cx="120" cy="120" r="110"/>
+                            <circle class="timer-ring-progress" id="timerRingProgress" cx="120" cy="120" r="110"/>
+                        </svg>
+                        <div class="timer-display" id="timerDisplay" title="Click to edit">25:00</div>
+                    </div>
+                    <div class="timer-controls">
+                        <button class="timer-icon-btn primary" id="timerStartBtn" title="Start / pause (Space)">
+                            <svg id="timerStartIcon" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/></svg>
+                        </button>
+                        <button class="timer-icon-btn" id="timerResetBtn" title="Reset (R)">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m0 0a8.001 8.001 0 0115.356 2M4.582 9H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </button>
+                    </div>
+                    <div class="stats-line" id="statsLine"></div>
+                </div>
+                <div id="taskArea"></div>
+                <div class="task-context-bar" id="taskContextBar">
+                    <button class="ctx-btn" id="prevBtn" title="Previous task (←)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <button class="ctx-btn" id="skipBtn" title="Next task (→)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                    <button class="ctx-btn" id="refreshBtn" title="Refresh session (R)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m0 0a8.001 8.001 0 0115.356 2M4.582 9H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </button>
+                    <span class="ctx-spacer"></span>
+                    <button class="ctx-btn ctx-btn-drop" id="dropBtn" title="Drop task from session">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                    <button class="ctx-btn ctx-btn-complete" id="completeBtn" title="Complete task (Enter)">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="timer-edit-overlay" id="timerEditOverlay">
+        <div class="timer-edit-modal">
+            <h3>Set Timer</h3>
+            <div class="time-inputs">
+                <input type="number" id="timerMinutes" min="0" max="999" value="25">
+                <span>:</span>
+                <input type="number" id="timerSeconds" min="0" max="59" value="00">
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-cancel" id="timerEditCancel">Cancel</button>
+                <button class="modal-save" id="timerEditSave">Set Timer</button>
+            </div>
+        </div>
+    </div>
+    <div class="timer-edit-overlay goal-overlay" id="goalOverlay">
+        <div class="timer-edit-modal">
+            <h3>Time Goal</h3>
+            <div class="goal-task-name" id="goalTaskName"></div>
+            <label class="toggle-row" style="padding-top:0;">
+                <span>Challenge timer</span>
+                <input type="checkbox" id="goalEnabledToggle">
+                <span class="toggle-slider"></span>
+            </label>
+            <p class="toggle-hint">On, the timer counts down from your estimate for this task — and counts up in red if you run past it. Off, this task uses the normal session length.</p>
+            <div id="goalFields">
+                <div class="goal-presets" id="goalPresets">
+                    <button class="goal-preset" data-mins="5">5m</button>
+                    <button class="goal-preset" data-mins="10">10m</button>
+                    <button class="goal-preset" data-mins="15">15m</button>
+                    <button class="goal-preset" data-mins="25">25m</button>
+                    <button class="goal-preset" data-mins="45">45m</button>
+                </div>
+                <div class="time-inputs">
+                    <input type="number" id="goalMinutes" min="1" max="999" value="15">
+                    <span style="font-size:1rem;">min</span>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-cancel" id="goalCancel">Cancel</button>
+                <button class="modal-save" id="goalSave">Save</button>
+            </div>
+            <button class="goal-remove hidden" id="goalRemove">Remove goal</button>
+        </div>
+    </div>
+    <div class="task-order-overlay" id="taskOrderOverlay">
+        <div class="task-order-modal">
+            <h3>Manage Tasks</h3>
+            <div class="search-section">
+                <input type="text" id="taskSearchInput" placeholder="Search all tasks..." class="search-input">
+                <div class="search-results" id="searchResults"></div>
+            </div>
+            <div class="session-actions">
+                <span class="session-divider" id="sessionDivider">Current Session</span>
+                <div class="session-action-buttons">
+                    <button class="session-action-btn" id="loadTodayBtn" title="Add today's & overdue tasks to your session">+ Today's Tasks</button>
+                    <button class="session-action-btn" id="loadPlannerBtn" title="Add your 🗓 Weekly Planner filter tasks to your session">+ Weekly Planner</button>
+                    <button class="session-action-btn danger" id="clearAllBtn" title="Remove all tasks from your session">Clear All</button>
+                </div>
+            </div>
+            <div class="task-list" id="taskList"></div>
+            <button class="close-modal-btn" id="closeTaskOrder">Done</button>
+        </div>
+    </div>
+    <div class="shortcuts-overlay" id="shortcutsOverlay">
+        <div class="shortcuts-modal">
+            <h3>Keyboard Shortcuts</h3>
+            <dl class="shortcuts-list">
+                <dt><kbd>Space</kbd></dt><dd>Play / pause timer</dd>
+                <dt><kbd>Enter</kbd></dt><dd>Complete current task</dd>
+                <dt><kbd>←</kbd> <kbd>P</kbd></dt><dd>Previous task</dd>
+                <dt><kbd>→</kbd> <kbd>N</kbd></dt><dd>Next task</dd>
+                <dt><kbd>R</kbd></dt><dd>Refresh session</dd>
+                <dt><kbd>E</kbd></dt><dd>Set time goal for this task</dd>
+                <dt><kbd>G</kbd></dt><dd>Toggle this task's time goal</dd>
+                <dt><kbd>M</kbd></dt><dd>Toggle compact mode</dd>
+                <dt><kbd>O</kbd></dt><dd>Open task in Todoist</dd>
+                <dt><kbd>?</kbd></dt><dd>This help</dd>
+                <dt><kbd>Esc</kbd></dt><dd>Close any modal</dd>
+            </dl>
+            <button class="close-modal-btn" id="closeShortcutsBtn">Close</button>
+        </div>
+    </div>
+    <div class="toast-container" id="toastContainer"><div class="toast-pill" id="toastPill"></div></div>
+    <div class="rollover-prompt" id="rolloverPrompt">
+        <span>New day — refresh with today's tasks?</span>
+        <button class="rollover-btn primary" id="rolloverLoadBtn">Load today</button>
+        <button class="rollover-btn" id="rolloverDismissBtn">Keep as is</button>
+    </div>
+    <div class="break-overlay" id="breakOverlay">
+        <div class="break-modal">
+            <div class="break-icon">☕</div>
+            <p id="breakMessage">Time for a break!</p>
+            <div class="break-buttons">
+                <button class="break-btn start-break" id="startBreakBtn">Start Break Timer</button>
+                <button class="break-btn skip-break" id="skipBreakBtn">Skip Break</button>
+            </div>
+        </div>
+    </div>
+    <!-- Loaded by both builds: Electron for cross-device sync, web for sync + in-page confetti. -->
+    <script src="confetti.browser.min.js"></script>
+    <script src="focus-sync.js"></script>
+    <script src="focus-push.js"></script>
+    <script>
+        // Electron bridge (exposed by preload.js via contextBridge). Named
+        // focusBridge locally: contextBridge defines window.focusAPI as a
+        // non-configurable global, so a top-level `const focusAPI` would throw
+        // "already declared" and kill the entire script in Electron.
+        const focusBridge = window.focusAPI || null;
+
+        // ---- Web / iOS PWA bootstrap -------------------------------------
+        // Everything below is a no-op under Electron, so there is still exactly
+        // one index.html serving both builds.
+        const IS_WEB = !focusBridge;
+        if (IS_WEB) {
+            document.documentElement.classList.add('is-web');
+            if ('serviceWorker' in navigator) {
+                // Registered after load so it never competes with first paint.
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('sw.js')
+                        .then(() => { if (window.FocusPush) FocusPush.init(); })
+                        .catch(err => console.warn('SW registration failed', err));
+                });
+                // Tapping a lock-screen alert wakes the app here. iOS ignores
+                // custom notification buttons, so the tap carries the intent.
+                navigator.serviceWorker.addEventListener('message', e => {
+                    if (e.data && e.data.type === 'focus-notification-click') {
+                        handleNotificationIntent(e.data.intent);
+                    }
+                });
+            }
+        }
+
+        // Acting on a tapped notification. Deliberately never completes a task
+        // on its own — an accidental lock-screen tap must not silently close
+        // something in Todoist. It brings you to the moment instead.
+        function handleNotificationIntent(intent) {
+            try {
+                if (isCompact) toggleCompactMode();
+                // A break that was waiting on you is now front and centre.
+                if (isOnBreak && pomodoroEnabled) { showBreakOverlay(pomodoroCount % 4 === 0); }
+                renderCurrentTask();
+                updateCompactBar();
+                if (intent === 'next') goToNextTask();
+            } catch (e) { /* never let a notification tap break the app */ }
+        }
+
+        // Cold start from a notification tap: the intent rides in the URL because
+        // there was no live page for the service worker to message.
+        if (IS_WEB) {
+            const _intent = new URLSearchParams(location.search).get('intent');
+            if (_intent) {
+                window.addEventListener('load', () => setTimeout(() => handleNotificationIntent(_intent), 120));
+                // Drop it from the URL so a refresh doesn't replay the action.
+                history.replaceState(null, '', location.pathname);
+            }
+        }
+
+        let apiToken = '';
+        let selectedFilter = localStorage.getItem('todoist_filter') || '';
+        let tasks = [], projects = {}, currentIndex = 0;
+        // Local calendar day ('YYYY-MM-DD') the session was last curated for —
+        // used by the day-rollover prompt. null until a session is restored/created.
+        let sessionDay = null;
+
+        // Local-timezone calendar day key, e.g. '2026-07-01'.
+        function localDateKey(d = new Date()) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // Persist the user's curated work queue across app restarts so they
+        // don't have to re-pick tasks every time the app opens.
+        // Last-write-wins clock for the session, used by cross-device sync.
+        // Bumped only when the session's *shape* actually changes: persistSession()
+        // is called on every 45s poll, and bumping on each of those would make
+        // this device permanently "newest" and starve the other one's edits.
+        let _sessionAt = Number(localStorage.getItem('focus_session_at') || 0);
+        let _sessionSig = '';
+        function sessionSignature() {
+            return tasks.map(t => t.id).join(',') + '|' + currentIndex + '|' + (sessionDay || '');
+        }
+        function persistSession() {
+            try {
+                // NOTE: writes the *stored* sessionDay, not always-today — the 45s
+                // poll persists constantly and must not erase the staleness signal.
+                localStorage.setItem('focus_session', JSON.stringify({ tasks, currentIndex, day: sessionDay || localDateKey() }));
+                const sig = sessionSignature();
+                if (sig !== _sessionSig) {
+                    _sessionSig = sig;
+                    _sessionAt = Date.now();
+                    localStorage.setItem('focus_session_at', String(_sessionAt));
+                    scheduleSync();
+                }
+            } catch (e) { /* ignore quota/serialize errors */ }
+        }
+        function restoreSession() {
+            try {
+                const raw = localStorage.getItem('focus_session');
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (Array.isArray(data.tasks)) {
+                    tasks = data.tasks;
+                    currentIndex = Math.min(Math.max(0, data.currentIndex | 0), Math.max(0, tasks.length - 1));
+                    // Old-format payloads (no `day`) are treated as today's so the
+                    // first launch after this upgrade never prompts.
+                    sessionDay = typeof data.day === 'string' ? data.day : localDateKey();
+                }
+                // Seed the signature from what we just restored so the first
+                // persist after launch isn't mistaken for a user edit.
+                _sessionSig = sessionSignature();
+            } catch (e) { /* corrupt storage — ignore */ }
+        }
+
+        // ---- Focus stats (focus_stats_v1) ----
+        // Flat object keyed by local date: { "2026-07-01": { focusSeconds, pomodoros, tasksCompleted } }.
+        // Written ONLY at completion moments (timer hitting 0, task closed) — never on app open.
+        let _statsDay = localDateKey();
+        function loadStats() {
+            try {
+                const raw = localStorage.getItem('focus_stats_v1');
+                const d = raw ? JSON.parse(raw) : {};
+                return (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+            } catch (e) { return {}; }
+        }
+        function saveStats(stats) {
+            try {
+                const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 400);
+                const min = localDateKey(cutoff);
+                Object.keys(stats).forEach(k => { if (k < min) delete stats[k]; }); // YYYY-MM-DD compares lexicographically
+                localStorage.setItem('focus_stats_v1', JSON.stringify(stats));
+            } catch (e) { /* quota — best effort */ }
+        }
+        function bumpStat(field, delta) {
+            const stats = loadStats(); const k = localDateKey();
+            const day = stats[k] || (stats[k] = { focusSeconds: 0, pomodoros: 0, tasksCompleted: 0 });
+            day[field] = (day[field] || 0) + delta;
+            saveStats(stats);
+            renderStatsToday();
+            scheduleSync();
+            // Return the COMBINED day, not just this device's bucket — callers use
+            // it to detect "first task finished today", which must stay true across
+            // devices (otherwise finishing #1 on the phone re-fires the streak toast
+            // after you already finished three on the Mac).
+            return combinedStatsFor(k, stats);
+        }
+        // ---- Cross-device stat totals ----
+        // Local stats hold only THIS device's numbers; every other device keeps
+        // its own bucket in the sync blob. Totals are the sum, which is why a
+        // pomodoro run on the iPhone shows up in the Mac's daily line.
+        function combinedStatsFor(dayKey, stats) {
+            const mine = (stats || loadStats())[dayKey] || {};
+            const theirs = (window.FocusSync && FocusSync.remoteStatsFor(dayKey)) || {};
+            return {
+                focusSeconds: (mine.focusSeconds || 0) + (theirs.focusSeconds || 0),
+                pomodoros: (mine.pomodoros || 0) + (theirs.pomodoros || 0),
+                tasksCompleted: (mine.tasksCompleted || 0) + (theirs.tasksCompleted || 0),
+                goalsBeaten: (mine.goalsBeaten || 0) + (theirs.goalsBeaten || 0)
+            };
+        }
+        function computeStreak(stats) {
+            // Consecutive days with a completed task, anchored on yesterday so the
+            // streak doesn't read 0 before the first task each morning.
+            // Counts a day if EITHER device finished something, so a phone-only
+            // day never breaks the chain.
+            const remoteDays = (window.FocusSync && FocusSync.remoteActiveDays()) || {};
+            const didWork = k => ((stats[k] || {}).tasksCompleted > 0) || !!remoteDays[k];
+            let streak = 0; const d = new Date();
+            if (!didWork(localDateKey(d))) d.setDate(d.getDate() - 1);
+            while (didWork(localDateKey(d))) { streak++; d.setDate(d.getDate() - 1); }
+            return streak;
+        }
+        function renderStatsToday() {
+            const el = $('statsLine'); if (!el) return;
+            const stats = loadStats(); const day = combinedStatsFor(localDateKey(), stats);
+            const parts = [];
+            const mins = Math.round((day.focusSeconds || 0) / 60);
+            if (mins > 0) parts.push(`${mins} min focused`);
+            if ((day.pomodoros || 0) > 0 && pomodoroEnabled) parts.push(`${day.pomodoros} pomodoro${day.pomodoros === 1 ? '' : 's'}`);
+            if ((day.tasksCompleted || 0) > 0) parts.push(`${day.tasksCompleted} task${day.tasksCompleted === 1 ? '' : 's'} done`);
+            if ((day.goalsBeaten || 0) > 0) parts.push(`${day.goalsBeaten} goal${day.goalsBeaten === 1 ? '' : 's'} beaten`);
+            const streak = computeStreak(stats);
+            if (streak >= 2) parts.push(`${streak}-day streak`);
+            el.textContent = parts.join(' · ');
+        }
+
+        // ---- Per-task time goals (focus_goals_v1) ----
+        // { [taskId]: { minutes, enabled, ts } }. Kept in a side map rather than
+        // on the task objects because the sync engine rebuilds those from the
+        // Todoist store, and a task removed and re-added should keep its goal.
+        let taskGoals = {};
+        function loadGoals() {
+            try {
+                const d = JSON.parse(localStorage.getItem('focus_goals_v1') || '{}');
+                taskGoals = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+            } catch (e) { taskGoals = {}; }
+        }
+        // `bump: false` writes without advancing the last-write clock — used when
+        // we're storing a remote device's newer copy, which must not make this
+        // device look like the author and bounce the change straight back.
+        function saveGoals(bump = true) {
+            try {
+                // Bound the store: drop the oldest goals for tasks no longer in
+                // the session once it grows past a few hundred entries.
+                const keys = Object.keys(taskGoals);
+                if (keys.length > 400) {
+                    const live = new Set(tasks.map(t => String(t.id)));
+                    keys.filter(k => !live.has(k))
+                        .sort((a, b) => (taskGoals[b].ts || 0) - (taskGoals[a].ts || 0))
+                        .slice(200)
+                        .forEach(k => delete taskGoals[k]);
+                }
+                localStorage.setItem('focus_goals_v1', JSON.stringify(taskGoals));
+                if (bump) {
+                    _goalsAt = Date.now();
+                    localStorage.setItem('focus_goals_at', String(_goalsAt));
+                    scheduleSync();
+                }
+            } catch (e) { /* quota — best effort */ }
+        }
+        let _goalsAt = Number(localStorage.getItem('focus_goals_at') || 0);
+        function goalFor(task) {
+            if (!task) return null;
+            const g = taskGoals[String(task.id)];
+            return (g && Number.isFinite(g.minutes) && g.minutes > 0) ? g : null;
+        }
+        function goalActive(task) { const g = goalFor(task); return !!(g && g.enabled); }
+        function currentTask() { return tasks[currentIndex] || null; }
+
+        // ---- Actual time on task (focus_elapsed_v1) ----
+        // Seconds the timer has actually run against each task, so a finished
+        // task can be scored against its goal. Only accrues while a work timer
+        // (or overtime) is running — never during breaks or while paused.
+        let taskElapsed = {};
+        function loadElapsed() {
+            try {
+                const d = JSON.parse(localStorage.getItem('focus_elapsed_v1') || '{}');
+                taskElapsed = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {};
+            } catch (e) { taskElapsed = {}; }
+        }
+        function saveElapsed() {
+            try {
+                const keys = Object.keys(taskElapsed);
+                if (keys.length > 400) {
+                    const live = new Set(tasks.map(t => String(t.id)));
+                    keys.filter(k => !live.has(k)).slice(0, keys.length - 200).forEach(k => delete taskElapsed[k]);
+                }
+                localStorage.setItem('focus_elapsed_v1', JSON.stringify(taskElapsed));
+                scheduleSync();
+            } catch (e) { /* quota — best effort */ }
+        }
+        // Open accrual window: which task is being timed, and since when.
+        let _elapsedTaskId = null, _elapsedStamp = null;
+        function beginElapsed() {
+            if (isOnBreak) return;
+            const t = currentTask();
+            if (!t) return;
+            _elapsedTaskId = String(t.id);
+            _elapsedStamp = Date.now();
+        }
+        function flushElapsed() {
+            if (_elapsedTaskId !== null && _elapsedStamp !== null) {
+                const secs = (Date.now() - _elapsedStamp) / 1000;
+                if (secs > 0) {
+                    taskElapsed[_elapsedTaskId] = (taskElapsed[_elapsedTaskId] || 0) + secs;
+                    saveElapsed();
+                }
+            }
+            _elapsedTaskId = null; _elapsedStamp = null;
+        }
+        // Stored time plus whatever the currently-open window has accrued, plus
+        // any time the other device logged against the same task — so a goal
+        // scorecard reflects the real total, not just this machine's share.
+        function elapsedFor(taskId) {
+            const id = String(taskId);
+            let secs = taskElapsed[id] || 0;
+            if (_elapsedTaskId === id && _elapsedStamp !== null) secs += (Date.now() - _elapsedStamp) / 1000;
+            if (window.FocusSync) secs += FocusSync.remoteElapsedFor(id);
+            return secs;
+        }
+        function clearTaskTracking(taskId) {
+            const id = String(taskId);
+            if (_elapsedTaskId === id) { _elapsedTaskId = null; _elapsedStamp = null; }
+            delete taskElapsed[id]; saveElapsed();
+            delete taskGoals[id]; saveGoals();
+        }
+
+        // =====================================================================
+        // CROSS-DEVICE SYNC
+        // State is mirrored through a single Todoist task's description (see
+        // focus-sync.js for the storage format and merge rules). This section is
+        // just the glue: what to send up, and what to do with what comes back.
+        // =====================================================================
+        let _syncReady = false;
+
+        function scheduleSync() {
+            if (_syncReady) FocusSync.schedule();
+        }
+
+        // Snapshot of everything worth sharing. Session carries task IDs only —
+        // both devices already pull the real task bodies from Todoist, so
+        // sending them again would bloat the blob and let text go stale.
+        function collectLocalState() {
+            return {
+                stats: loadStats(),
+                elapsed: taskElapsed,
+                session: {
+                    at: _sessionAt,
+                    taskIds: tasks.map(t => String(t.id)),
+                    currentIndex: currentIndex,
+                    day: sessionDay || localDateKey()
+                },
+                goals: { at: _goalsAt, data: taskGoals },
+                settings: {
+                    at: _settingsAt,
+                    data: {
+                        pomodoroEnabled, soundEnabled, useTaskDurations,
+                        workDurationMins, shortBreakMins, longBreakMins, selectedFilter
+                    }
+                }
+            };
+        }
+
+        // Apply whatever the merge decided is authoritative. Guarded on `by`:
+        // a blob whose winning entry is our own is already reflected locally.
+        function applyRemoteState(blob) {
+            const me = FocusSync.deviceId();
+            let sessionChanged = false;
+
+            const rs = blob.session;
+            if (rs && rs.by !== me && (rs.at || 0) > _sessionAt && Array.isArray(rs.taskIds)) {
+                // Rehydrate from the local item store. IDs we don't know about
+                // (not synced yet, or completed elsewhere) are simply dropped —
+                // the next Todoist sync will fill in anything real.
+                const rebuilt = rs.taskIds.map(id => itemsById[String(id)]).filter(Boolean);
+                if (rebuilt.length || rs.taskIds.length === 0) {
+                    tasks = rebuilt;
+                    currentIndex = Math.min(Math.max(0, rs.currentIndex | 0), Math.max(0, tasks.length - 1));
+                    sessionDay = typeof rs.day === 'string' ? rs.day : sessionDay;
+                    _sessionAt = rs.at;
+                    _sessionSig = sessionSignature();
+                    localStorage.setItem('focus_session_at', String(_sessionAt));
+                    localStorage.setItem('focus_session', JSON.stringify({ tasks, currentIndex, day: sessionDay }));
+                    sessionChanged = true;
+                }
+            }
+
+            const rg = blob.goals;
+            let goalsChanged = false;
+            if (rg && rg.by !== me && (rg.at || 0) > _goalsAt && rg.data) {
+                taskGoals = rg.data;
+                _goalsAt = rg.at;
+                localStorage.setItem('focus_goals_at', String(_goalsAt));
+                saveGoals(false); // don't re-claim authorship
+                goalsChanged = true;
+            }
+
+            const rst = blob.settings;
+            if (rst && rst.by !== me && (rst.at || 0) > _settingsAt && rst.data) {
+                applyRemoteSettings(rst.data);
+                _settingsAt = rst.at;
+                localStorage.setItem('focus_settings_at', String(_settingsAt));
+            }
+
+            // A goal edited on another device has to reach the chip and re-arm an
+            // idle timer. renderCurrentTask() ends in applyTaskDurationIfIdle(),
+            // which deliberately won't disturb a running, paused or hand-set timer.
+            if (sessionChanged || goalsChanged) { renderCurrentTask(); updateCompactBar(); }
+            if (goalsChanged && taskOrderOverlay.classList.contains('active')) renderTaskList();
+            renderStatsToday(); // other devices' numbers may have moved
+        }
+
+        function applyRemoteSettings(s) {
+            if (typeof s.pomodoroEnabled === 'boolean') { pomodoroEnabled = s.pomodoroEnabled; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); }
+            if (typeof s.soundEnabled === 'boolean') { soundEnabled = s.soundEnabled; localStorage.setItem('sound_enabled', soundEnabled); }
+            if (typeof s.useTaskDurations === 'boolean') { useTaskDurations = s.useTaskDurations; localStorage.setItem('use_task_durations', useTaskDurations); }
+            if (Number.isFinite(s.workDurationMins)) { workDurationMins = s.workDurationMins; localStorage.setItem('pomodoro_work', workDurationMins); }
+            if (Number.isFinite(s.shortBreakMins)) { shortBreakMins = s.shortBreakMins; localStorage.setItem('pomodoro_short', shortBreakMins); }
+            if (Number.isFinite(s.longBreakMins)) { longBreakMins = s.longBreakMins; localStorage.setItem('pomodoro_long', longBreakMins); }
+            if (typeof s.selectedFilter === 'string') { selectedFilter = s.selectedFilter; localStorage.setItem('todoist_filter', selectedFilter); }
+            // Reflect into the settings UI so an open panel doesn't show stale values.
+            if (soundToggle) soundToggle.checked = soundEnabled;
+            if (pomodoroToggle) pomodoroToggle.checked = pomodoroEnabled;
+            if (taskDurationToggle) taskDurationToggle.checked = useTaskDurations;
+            if (workDurationInput) workDurationInput.value = workDurationMins;
+            if (shortBreakInput) shortBreakInput.value = shortBreakMins;
+            if (longBreakInput) longBreakInput.value = longBreakMins;
+            if (filterSelect) filterSelect.value = selectedFilter;
+            if (pomodoroSettings) pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
+            // Keep the derived second-counts in step with the minute settings —
+            // the timer reads these, not the *Mins variables.
+            WORK_DURATION = workDurationMins * 60;
+            SHORT_BREAK = shortBreakMins * 60;
+            LONG_BREAK = longBreakMins * 60;
+            updatePomodoroDots();
+        }
+
+        // ---- Lock-screen alert settings UI ---------------------------------
+        function renderPushStatus() {
+            const el = $('pushStatus');
+            if (!el || !window.FocusPush) return;
+            el.className = 'push-status';
+
+            if (!FocusPush.isSupported()) { el.textContent = 'This browser can\'t do push notifications.'; return; }
+            if (FocusPush.isIOS() && !FocusPush.isInstalled()) {
+                el.classList.add('warn');
+                el.textContent = 'Add Focus to your Home Screen first — iOS only allows alerts for installed apps, not Safari tabs.';
+                return;
+            }
+            if (!FocusPush.isConfigured()) { el.textContent = 'Enter your push server URL to enable lock screen alerts.'; return; }
+            if (FocusPush.permission() === 'denied') {
+                el.classList.add('warn');
+                el.textContent = 'Notifications are blocked. Re-enable them in iOS Settings → Notifications → Focus.';
+                return;
+            }
+            if (FocusPush.isActive()) {
+                el.classList.add('on');
+                el.textContent = 'Lock screen alerts are on. Your timer will alert you even with the app closed.';
+                return;
+            }
+            el.textContent = 'Alerts off — tap "Turn on alerts".';
+        }
+
+        function initPushSettings() {
+            if (!IS_WEB || !window.FocusPush) return;
+            const wrap = $('pushSettings');
+            if (wrap) wrap.style.display = 'block';
+            const cfg = FocusPush.config();
+            if ($('pushUrl')) $('pushUrl').value = cfg.url || '';
+            if ($('pushKey')) $('pushKey').value = cfg.key || '';
+            renderPushStatus();
+
+            $('pushEnableBtn')?.addEventListener('click', async () => {
+                // Persist first: enable() needs the URL to fetch the server's key.
+                FocusPush.setConfig({ url: $('pushUrl').value.trim(), key: $('pushKey').value.trim() });
+                const btn = $('pushEnableBtn');
+                btn.disabled = true; btn.textContent = 'Enabling…';
+                const r = await FocusPush.enable();
+                btn.disabled = false; btn.textContent = 'Turn on alerts';
+                renderPushStatus();
+                if (!r.ok) {
+                    const why = {
+                        'unsupported': 'This browser can\'t do push notifications.',
+                        'not-configured': 'Enter your push server URL first.',
+                        'not-installed': 'Add Focus to your Home Screen first — iOS blocks alerts in Safari tabs.',
+                        'denied': 'You declined notifications. Re-enable in iOS Settings → Notifications → Focus.',
+                        'no-server-key': 'The push server has no VAPID key set. Run the wrangler secret commands.',
+                        'subscribe-failed': 'Could not subscribe: ' + (r.detail || 'unknown error')
+                    }[r.reason] || ('Failed: ' + r.reason);
+                    showToast(why);
+                } else {
+                    showToast('Lock screen alerts on');
+                }
+            });
+
+            $('pushTestBtn')?.addEventListener('click', async () => {
+                FocusPush.setConfig({ url: $('pushUrl').value.trim(), key: $('pushKey').value.trim() });
+                const btn = $('pushTestBtn');
+                btn.disabled = true; btn.textContent = 'Sending…';
+                const r = await FocusPush.test();
+                btn.disabled = false; btn.textContent = 'Send test';
+                showToast(r.ok
+                    ? 'Test sent — check your lock screen'
+                    : ('Test failed: ' + (r.reason || r.detail || ('status ' + r.status))));
+            });
+        }
+
+        function initSync() {
+            // Degrade to a plain single-device app if focus-sync.js didn't load,
+            // rather than taking the whole script down with a ReferenceError.
+            if (!window.FocusSync) return;
+            if (!apiToken || _syncReady) return;
+            FocusSync.init({
+                getToken: async () => apiToken,
+                getLocalState: collectLocalState,
+                onRemote: applyRemoteState,
+                log: (...a) => console.log(...a)
+            });
+            _syncReady = true;
+            FocusSync.sync();
+        }
+        // "4 min" / "35 sec" — used in goal chips and outcome toasts.
+        function fmtDuration(secs) {
+            const s = Math.abs(Math.round(secs));
+            if (s < 60) return `${s} sec`;
+            const m = Math.round(s / 60);
+            if (m < 60) return `${m} min`;
+            const h = Math.floor(m / 60), rem = m % 60;
+            return rem ? `${h}h ${rem}m` : `${h}h`;
+        }
+
+        // Project cache — restored instantly on launch so the UI can render
+        // without waiting on the network. Refreshed in the background.
+        function loadCachedProjects() {
+            try {
+                const raw = localStorage.getItem('todoist_projects_cache');
+                if (raw) {
+                    const data = JSON.parse(raw);
+                    if (data && typeof data === 'object') projects = data;
+                }
+            } catch (e) { /* ignore corrupt cache */ }
+        }
+        function saveCachedProjects() {
+            try { localStorage.setItem('todoist_projects_cache', JSON.stringify(projects)); } catch (e) {}
+        }
+        // Persist the incremental sync store so Manage Tasks opens instantly
+        // even before the first network call completes.
+        function persistItemStore() {
+            try {
+                localStorage.setItem('todoist_items_v1', JSON.stringify(itemsById));
+                localStorage.setItem('todoist_sync_token_v1', syncToken || '');
+                if (currentUserId) localStorage.setItem('todoist_user_id', String(currentUserId));
+            } catch (e) { /* quota — best effort */ }
+        }
+        function restoreItemStore() {
+            try {
+                const raw = localStorage.getItem('todoist_items_v1');
+                const tok = localStorage.getItem('todoist_sync_token_v1');
+                const uid = localStorage.getItem('todoist_user_id');
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') itemsById = parsed;
+                }
+                syncToken = tok || null;
+                if (uid) currentUserId = uid;
+            } catch (e) {
+                // Corrupt storage — start fresh (will trigger a full sync)
+                itemsById = {}; syncToken = null;
+            }
+        }
+        function populateFilterSelect() {
+            const currentValue = filterSelect.value;
+            const seen = new Set();
+            const unique = [];
+            Object.values(projects).forEach(p => {
+                if (!p || !p.id || seen.has(p.id)) return;
+                seen.add(p.id);
+                unique.push(p);
+            });
+            unique.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            filterSelect.innerHTML = '<option value="">All projects (Today & Overdue)</option>';
+            unique.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id; opt.textContent = p.name;
+                filterSelect.appendChild(opt);
+            });
+            filterSelect.value = currentValue;
+        }
+
+        let timerSeconds = 25 * 60, timerInterval = null, timerRunning = false, initialTimerSeconds = 25 * 60, timerEndTime = null;
+        // Overtime: a challenge-timer countdown that has passed zero and is now
+        // counting up, so you can see exactly how far over your estimate you ran.
+        let inOvertime = false, overtimeSeconds = 0, overtimeStart = null, overtimeInterval = null;
+        // Which task the running overtime belongs to, so it can be abandoned if
+        // that task is navigated away from, dropped, or completed elsewhere.
+        let _overtimeTaskId = null;
+        // A Pomodoro work session that finished on a goal task, banked but not
+        // yet spent: the break is owed once that task is actually completed.
+        let _breakPendingTaskId = null;
+        let timerManuallySet = false; // user edited the timer — don't auto-apply task durations until it's released
+        let isCompact = false;
+        let pomodoroEnabled = localStorage.getItem('pomodoro_enabled') === 'true';
+        let soundEnabled = localStorage.getItem('sound_enabled') !== 'false';
+        let useTaskDurations = localStorage.getItem('use_task_durations') === 'true'; // off by default: fixed work-length timer
+        let pomodoroCount = 0, isOnBreak = false;
+        let workDurationMins = parseInt(localStorage.getItem('pomodoro_work') || '25');
+        let shortBreakMins = parseInt(localStorage.getItem('pomodoro_short') || '5');
+        let longBreakMins = parseInt(localStorage.getItem('pomodoro_long') || '15');
+        let WORK_DURATION = workDurationMins * 60, SHORT_BREAK = shortBreakMins * 60, LONG_BREAK = longBreakMins * 60;
+        // Last-write clock for settings, so the newer device's preferences win.
+        let _settingsAt = Number(localStorage.getItem('focus_settings_at') || 0);
+
+        // Todoist duration ({amount, unit:'minute'|'day'}) → work seconds for the
+        // current task; falls back to the configured work duration.
+        // A task's own time goal, when switched on, outranks the Todoist
+        // duration; the configured work length remains the fallback.
+        function taskWorkSeconds() {
+            const task = tasks[currentIndex];
+            const g = goalFor(task);
+            if (g && g.enabled) return Math.min(g.minutes, 999) * 60;
+            if (!useTaskDurations) return WORK_DURATION;
+            const d = task && task.duration;
+            const mins = d && d.unit === 'minute' ? Number(d.amount) : NaN;
+            if (Number.isFinite(mins) && mins > 0) return Math.min(mins, 999) * 60;
+            return WORK_DURATION;
+        }
+
+        // Force the timer back to the current task's length. Unlike
+        // applyTaskDurationIfIdle() this overrides a manual edit and a paused
+        // mid-countdown, because the user just explicitly changed the goal.
+        // Still never interrupts a running timer or a break.
+        function armTimerForCurrentTask() {
+            if (timerRunning || isOnBreak) return false;
+            exitOvertime();
+            timerManuallySet = false;
+            const secs = taskWorkSeconds();
+            timerSeconds = secs; initialTimerSeconds = secs;
+            updateTimerDisplay();
+            return true;
+        }
+
+        function applyTaskDurationIfIdle() {
+            if (timerRunning || isOnBreak || timerManuallySet || inOvertime) return;
+            // Only an unstarted (or fully finished) timer may be re-armed — a paused
+            // mid-countdown timer is never yanked.
+            if (timerSeconds !== initialTimerSeconds && timerSeconds !== 0) return;
+            const secs = taskWorkSeconds();
+            if (initialTimerSeconds === secs && timerSeconds === secs) return; // no churn
+            timerSeconds = secs; initialTimerSeconds = secs;
+            updateTimerDisplay();
+        }
+
+        const $ = id => document.getElementById(id);
+        const escHtml = t => { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; };
+
+        // Celebrate clearing the last task. Electron spawns a click-through
+        // overlay window for this; on web we draw into a fixed canvas instead.
+        let _confettiTimer = null;
+        function fireConfetti() {
+            if (focusBridge) { focusBridge.showConfetti(); return; }
+            const canvas = $('webConfetti');
+            if (!canvas || typeof confetti === 'undefined') return;
+            canvas.classList.add('firing');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // useWorker:false — an OffscreenCanvas worker is unreliable in an
+            // iOS standalone PWA and silently drops the animation.
+            const shoot = confetti.create(canvas, { resize: true, useWorker: false });
+            const colors = ['#001f3f', '#C5B358', '#ffffff'];
+            const end = Date.now() + 2400;
+            (function frame() {
+                shoot({ particleCount: 4, angle: 60, spread: 55, origin: { x: 0, y: 0.6 }, colors, scalar: 1.2, gravity: 0.9 });
+                shoot({ particleCount: 4, angle: 120, spread: 55, origin: { x: 1, y: 0.6 }, colors, scalar: 1.2, gravity: 0.9 });
+                if (Date.now() < end) requestAnimationFrame(frame);
+            }());
+            shoot({ particleCount: 140, spread: 110, origin: { y: 0.6 }, colors, scalar: 1.5, gravity: 0.8 });
+            clearTimeout(_confettiTimer);
+            _confettiTimer = setTimeout(() => canvas.classList.remove('firing'), 4000);
+        }
+        // Reusable ephemeral notification pill — fades in, auto-dismisses after 3s.
+        let _toastTimer = null;
+        function showToast(message) {
+            const pill = $('toastPill');
+            if (!pill) return;
+            pill.textContent = message;
+            pill.classList.add('visible');
+            clearTimeout(_toastTimer);
+            _toastTimer = setTimeout(() => pill.classList.remove('visible'), 3000);
+        }
+        // Todoist color names → hex (used to color the project dot on the task block).
+        const TODOIST_COLORS = {
+            berry_red: '#B8255F', red: '#DC4C3E', orange: '#C77100', yellow: '#B29104',
+            olive_green: '#949C31', lime_green: '#65A33A', green: '#369307', mint_green: '#42A393',
+            teal: '#148FAD', sky_blue: '#319BC0', light_blue: '#6988A4', blue: '#4073FF',
+            grape: '#884DFF', violet: '#AF38EB', lavender: '#EB96EB', magenta: '#E05095',
+            salmon: '#C9766F', charcoal: '#808080', grey: '#999999', taupe: '#CCAC93'
+        };
+        function projectColor(project) {
+            if (!project) return 'var(--accent)';
+            return TODOIST_COLORS[project.color] || 'var(--accent)';
+        }
+        const wrapDigits = str => Array.from(String(str)).map(c => `<span class="digit">${c}</span>`).join('');
+        function setTimerText(el, secs, prefix = '') {
+            const m = Math.floor(secs / 60);
+            const s = String(secs % 60).padStart(2, '0');
+            const pre = prefix ? `<span class="digit">${prefix}</span>` : '';
+            el.innerHTML = pre + wrapDigits(m) + '<span class="colon">:</span>' + wrapDigits(s);
+        }
+        const setupScreen = $('setupScreen'), focusScreen = $('focusScreen'), apiTokenInput = $('apiToken');
+        const filterSelect = $('filterSelect'), connectBtn = $('connectBtn'), settingsBtn = $('settingsBtn'), cancelSettingsBtn = $('cancelSettingsBtn');
+        const reorderBtn = $('reorderBtn'), taskArea = $('taskArea'), taskCounter = $('taskCounter');
+        const timerDisplay = $('timerDisplay'), timerResetBtn = $('timerResetBtn'), timerStartBtn = $('timerStartBtn'), timerStartIcon = $('timerStartIcon');
+        const PLAY_ICON_HTML = '<polygon points="6 4 20 12 6 20 6 4" fill="currentColor"/>';
+        const PAUSE_ICON_HTML = '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>';
+        const STOP_ICON_HTML = '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>';
+        function updateStartButton() {
+            if (!timerStartBtn) return;
+            timerStartBtn.classList.toggle('running', timerRunning || inOvertime);
+            timerStartBtn.title = inOvertime ? 'Stop overtime (Space)' : (timerRunning ? 'Pause (Space)' : 'Start (Space)');
+            if (timerStartIcon) timerStartIcon.innerHTML = inOvertime ? STOP_ICON_HTML : (timerRunning ? PAUSE_ICON_HTML : PLAY_ICON_HTML);
+        }
+        const skipBtn = $('skipBtn'), prevBtn = $('prevBtn'), refreshBtn = $('refreshBtn'), compactBtn = $('compactBtn'), completeBtn = $('completeBtn'), dropBtn = $('dropBtn');
+        const timerEditOverlay = $('timerEditOverlay'), timerMinutesInput = $('timerMinutes');
+        const timerSecondsInput = $('timerSeconds'), timerEditCancel = $('timerEditCancel'), timerEditSave = $('timerEditSave');
+        const taskOrderOverlay = $('taskOrderOverlay'), taskList = $('taskList'), closeTaskOrder = $('closeTaskOrder');
+        const taskSearchInput = $('taskSearchInput'), searchResults = $('searchResults');
+        const clearAllBtn = $('clearAllBtn'), loadTodayBtn = $('loadTodayBtn'), loadPlannerBtn = $('loadPlannerBtn');
+        const pomodoroDots = $('pomodoroDots'), timerRingProgress = $('timerRingProgress'), compactRingProgress = $('compactRingProgress');
+        const shortcutsOverlay = $('shortcutsOverlay'), shortcutsBtn = $('shortcutsBtn'), closeShortcutsBtn = $('closeShortcutsBtn');
+        const RING_CIRCUMFERENCE = 2 * Math.PI * 110;
+        const COMPACT_RING_CIRCUMFERENCE = 2 * Math.PI * 17;
+        if (timerRingProgress) {
+            timerRingProgress.style.strokeDasharray = RING_CIRCUMFERENCE;
+            timerRingProgress.style.strokeDashoffset = RING_CIRCUMFERENCE;
+        }
+        if (compactRingProgress) {
+            compactRingProgress.style.strokeDasharray = COMPACT_RING_CIRCUMFERENCE;
+            compactRingProgress.style.strokeDashoffset = COMPACT_RING_CIRCUMFERENCE;
+        }
+        let allTasks = [], searchTimeout = null, selectedSearchIndex = -1, currentUserId = null;
+        // Incremental sync engine: persistent item store + delta token.
+        let itemsById = {};   // String(item.id) → Sync item object
+        let syncToken = null; // null means "no stored token → use *"
+        let _syncInFlight = false; // re-entrancy guard
+        let _syncSucceededThisRun = false; // true once any sync completes; gates session pruning
+        const compactTimer = $('compactTimer'), compactTask = $('compactTask');
+        const compactPlayPause = $('compactPlayPause'), compactComplete = $('compactComplete'), compactExpand = $('compactExpand'), compactSkip = $('compactSkip');
+        const compactPrev = $('compactPrev'), compactNext = $('compactNext');
+        const soundToggle = $('soundToggle'), pomodoroToggle = $('pomodoroToggle'), pomodoroSettings = $('pomodoroSettings');
+        const taskDurationToggle = $('taskDurationToggle');
+        const workDurationInput = $('workDuration'), shortBreakInput = $('shortBreakDuration'), longBreakInput = $('longBreakDuration');
+        const startBreakBtn = $('startBreakBtn'), skipBreakBtn = $('skipBreakBtn');
+
+        function openTaskInTodoist(v2Id, taskId) {
+            // Try v2_id first for deep link, fall back to task ID with web URL
+            const url = v2Id ? `todoist://task?id=${v2Id}` : `https://app.todoist.com/app/task/${taskId}`;
+            if (focusBridge) {
+                focusBridge.openExternal(url);
+            } else {
+                window.location.href = url;
+            }
+        }
+
+        async function init() {
+            // Restore persisted item store FIRST so allTasks is available instantly
+            // (Manage Tasks opens without any network wait, even offline).
+            restoreItemStore();
+            allTasks = Object.values(itemsById);
+            loadGoals();
+            loadElapsed();
+
+            // Seed today's pomodoro count from stats so the dots and the
+            // every-4 long-break cadence survive an app restart. No bucket → 0.
+            pomodoroCount = (loadStats()[localDateKey()] || {}).pomodoros || 0;
+
+            // Load token from safeStorage (Electron) or fall back to localStorage.
+            const legacyToken = localStorage.getItem('todoist_api_token');
+            if (focusBridge) {
+                try {
+                    apiToken = await focusBridge.getToken();
+                    // One-time migration: move token from localStorage into safeStorage.
+                    if (!apiToken && legacyToken) {
+                        apiToken = legacyToken;
+                        await focusBridge.setToken(apiToken);
+                    }
+                    // Remove the plaintext copy only after verifying the token
+                    // actually round-trips from safeStorage — if the encrypted
+                    // write silently failed, keep the legacy copy so the next
+                    // launch can retry instead of logging the user out forever.
+                    if (legacyToken && (await focusBridge.getToken()) === apiToken) {
+                        localStorage.removeItem('todoist_api_token');
+                    }
+                } catch (e) {
+                    // Bridge failure — fall back to the legacy copy so a broken
+                    // IPC layer degrades to "works like before" not "logged out".
+                    console.error('token load via bridge failed', e);
+                    if (!apiToken) apiToken = legacyToken || '';
+                }
+            } else {
+                // Non-Electron fallback (browser preview, dev, etc.)
+                apiToken = legacyToken || '';
+            }
+
+            apiTokenInput.value = apiToken;
+            soundToggle.checked = soundEnabled;
+            pomodoroToggle.checked = pomodoroEnabled;
+            taskDurationToggle.checked = useTaskDurations;
+            pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
+            workDurationInput.value = workDurationMins;
+            shortBreakInput.value = shortBreakMins;
+            longBreakInput.value = longBreakMins;
+
+            // Screen routing — done here (after token loads) so there's no
+            // wrong-screen flash if the async token fetch resolves non-empty.
+            if (apiToken) {
+                // Render immediately from cache; refresh from network in background.
+                loadCachedProjects();
+                populateFilterSelect();
+                filterSelect.value = selectedFilter;
+                showFocusScreen();
+                restoreSession();
+                renderCurrentTask();
+                updateCompactBar();
+                loadProjects().then(() => {
+                    renderCurrentTask();
+                    if (taskOrderOverlay.classList.contains('active')) renderTaskList();
+                });
+                // Pre-warm the all-tasks cache so opening Manage Tasks is instant.
+                loadAllTasks();
+                checkDayRollover();
+                // Pull the other device's state. Runs after restoreSession() so
+                // the merge compares against what's actually loaded here.
+                initSync();
+            }
+            updateTimerDisplay();
+            renderStatsToday(); // display of already-logged data only — never logs
+            initPushSettings();
+        }
+
+        // Background poll: sync every 45 seconds and merge changes into the
+        // session. Only re-renders the Manage Tasks list when no drag is active
+        // so we don't interrupt the user mid-reorder.
+        setInterval(async () => {
+            if (!apiToken) return;
+            await syncNow();
+            allTasks = Object.values(itemsById);
+            applyItemsToSession();
+            persistSession();
+            renderCurrentTask();
+            updateCompactBar();
+            if (taskOrderOverlay.classList.contains('active') && draggedIndex === null) {
+                renderTaskList();
+                searchTasks(taskSearchInput.value);
+            }
+            checkDayRollover(); // catches the app left running across midnight
+            // Midnight rollover of the stats display: reset the today line and
+            // pomodoro dots when the app runs across midnight.
+            if (localDateKey() !== _statsDay) { _statsDay = localDateKey(); pomodoroCount = 0; updatePomodoroDots(); renderStatsToday(); }
+            // Cross-device sync rides the same 45s cadence.
+            if (_syncReady) FocusSync.sync();
+        }, 45000);
+
+        // ---- Sync at the moments that matter on a phone --------------------
+        // iOS freezes timers the instant you leave the app and may kill the tab
+        // outright, so the 45s poll cannot be relied on. Flush on the way out and
+        // pull fresh state on the way back in.
+        document.addEventListener('visibilitychange', () => {
+            if (!_syncReady) return;
+            if (document.visibilityState === 'hidden') {
+                FocusSync.flush();
+            } else {
+                // Recompute the countdown immediately rather than waiting up to a
+                // second for the next tick — the timer is anchored to a wall-clock
+                // end time, so it's accurate the moment we re-read it.
+                if (timerRunning) updateTimerDisplay();
+                FocusSync.sync();
+                syncNow().then(() => {
+                    allTasks = Object.values(itemsById);
+                    applyItemsToSession();
+                    renderCurrentTask();
+                    updateCompactBar();
+                    checkDayRollover();
+                });
+            }
+        });
+        // pagehide is the only reliably-delivered "app is going away" event in
+        // iOS Safari; visibilitychange alone can be skipped when the tab is killed.
+        window.addEventListener('pagehide', () => { if (_syncReady) FocusSync.flush(); });
+
+        function toggleCompactMode() {
+            isCompact = !isCompact;
+            document.body.classList.toggle('compact-mode', isCompact);
+            if (focusBridge) focusBridge.toggleCompact(isCompact);
+            updateCompactBar();
+        }
+
+        function updateCompactBar() {
+            const shown = inOvertime ? overtimeSeconds : timerSeconds;
+            const minutes = Math.floor(shown / 60), seconds = shown % 60;
+            const prefix = inOvertime ? `<span class="digit">+</span>` : '';
+            const timeHtml = `${prefix}${wrapDigits(minutes)}<span class="colon">:</span>${wrapDigits(String(seconds).padStart(2,'0'))}`;
+            compactTimer.innerHTML = isOnBreak ? `☕ ${timeHtml}` : timeHtml;
+            compactTimer.classList.toggle('running', timerRunning || inOvertime);
+            compactTimer.classList.remove('warning', 'danger', 'finished', 'break-mode', 'overtime');
+            if (inOvertime) compactTimer.classList.add('overtime');
+            else if (isOnBreak) compactTimer.classList.add('break-mode');
+            else if (timerSeconds === 0) compactTimer.classList.add('finished');
+            else if (timerSeconds <= 60) compactTimer.classList.add('danger');
+            else if (timerSeconds <= 300) compactTimer.classList.add('warning');
+
+            compactPlayPause.classList.toggle('active', timerRunning || inOvertime);
+            const playIcon = $('compactPlayIcon');
+            if (inOvertime) {
+                playIcon.innerHTML = STOP_ICON_HTML;
+            } else if (timerRunning) {
+                playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>';
+            } else {
+                playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>';
+            }
+
+            if (tasks.length > 0 && tasks[currentIndex]) {
+                compactTask.textContent = tasks[currentIndex].content;
+                compactTask.onclick = () => openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id);
+            } else {
+                compactTask.textContent = 'No tasks';
+                compactTask.onclick = null;
+            }
+
+            compactPrev.disabled = tasks.length <= 1;
+            compactNext.disabled = tasks.length <= 1;
+        }
+
+        function updateTimerDisplay() {
+            if (inOvertime) setTimerText(timerDisplay, overtimeSeconds, '+');
+            else setTimerText(timerDisplay, timerSeconds);
+            timerDisplay.classList.toggle('running', timerRunning || inOvertime);
+            updateStartButton();
+            timerDisplay.classList.remove('warning', 'danger', 'finished', 'break-mode', 'overtime');
+            if (inOvertime) timerDisplay.classList.add('overtime');
+            else if (isOnBreak) timerDisplay.classList.add('break-mode');
+            else if (timerSeconds === 0) timerDisplay.classList.add('finished');
+            else if (timerSeconds <= 60) timerDisplay.classList.add('danger');
+            else if (timerSeconds <= 300) timerDisplay.classList.add('warning');
+            timerDisplay.classList.toggle('paused', !inOvertime && !timerRunning && timerSeconds > 0 && timerSeconds < initialTimerSeconds);
+            updateProgressRing();
+            updatePomodoroDots();
+            updateCompactBar();
+            updateGoalChipLive();
+        }
+
+        function updateProgressRing() {
+            // In overtime the countdown is spent, so the ring stays full and red.
+            const progress = inOvertime ? 1 : (initialTimerSeconds > 0
+                ? Math.min(1, Math.max(0, (initialTimerSeconds - timerSeconds) / initialTimerSeconds))
+                : 0);
+            const setRing = (el, circumference) => {
+                if (!el) return;
+                el.style.strokeDashoffset = circumference * (1 - progress);
+                el.classList.remove('warning', 'danger', 'break-mode');
+                if (inOvertime) el.classList.add('danger');
+                else if (isOnBreak) el.classList.add('break-mode');
+                else if (timerSeconds <= 60 && timerSeconds > 0) el.classList.add('danger');
+                else if (timerSeconds <= 300 && timerSeconds > 0) el.classList.add('warning');
+            };
+            setRing(timerRingProgress, RING_CIRCUMFERENCE);
+            setRing(compactRingProgress, COMPACT_RING_CIRCUMFERENCE);
+        }
+
+        function updatePomodoroDots() {
+            if (!pomodoroDots) return;
+            pomodoroDots.classList.toggle('active', pomodoroEnabled);
+            if (!pomodoroEnabled) return;
+            // Show 4 filled during long break (celebration), otherwise count % 4.
+            const filled = (isOnBreak && pomodoroCount > 0 && pomodoroCount % 4 === 0)
+                ? 4 : pomodoroCount % 4;
+            let html = '';
+            for (let i = 0; i < 4; i++) html += `<span class="pomodoro-dot${i < filled ? ' filled' : ''}"></span>`;
+            pomodoroDots.innerHTML = html;
+        }
+
+        function startTimer() {
+            if (timerSeconds <= 0) return;
+            // Lazily ask for notification permission the first time the user starts a timer.
+            if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                Notification.requestPermission().catch(() => {});
+            }
+            exitOvertime();
+            timerRunning = true;
+            flushElapsed(); beginElapsed();
+            playStartTick();
+            // Anchor to a wall-clock end time rather than counting ticks. If a
+            // tick is delayed or dropped (background throttling, system sleep),
+            // the next tick recomputes the true remaining time and stays accurate.
+            timerEndTime = Date.now() + timerSeconds * 1000;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timerSeconds = Math.max(0, Math.round((timerEndTime - Date.now()) / 1000));
+                updateTimerDisplay();
+                if (timerSeconds <= 0) { stopTimer(); if (!isOnBreak) bumpStat('focusSeconds', initialTimerSeconds); timerManuallySet = false; playTimerSound(); showTimerNotification(); handleTimerComplete(); }
+            }, 1000);
+            updateTimerDisplay();
+            // Book the lock-screen alert now, while we still have a foreground
+            // to make the network call from.
+            schedulePushForTimer();
+        }
+
+        // What the alert should say when the running timer hits zero. Shared by
+        // the in-app notification and the push scheduled for the same moment, so
+        // the two can never describe the same event differently.
+        function timerNotificationText() {
+            const isGoalEnding = !isOnBreak && goalActive(currentTask());
+            const isWorkSessionEnding = pomodoroEnabled && !isOnBreak;
+            const isBreakEnding = pomodoroEnabled && isOnBreak;
+            if (isGoalEnding) {
+                // No break is coming — say what's actually happening.
+                const g = goalFor(currentTask());
+                return {
+                    title: `${g.minutes} min goal reached`,
+                    body: `Now counting overtime — ${tasks[currentIndex] ? tasks[currentIndex].content : 'finish when ready'}`
+                };
+            }
+            if (isBreakEnding) return { title: 'Break complete', body: 'Back to focus mode' };
+            if (isWorkSessionEnding) {
+                const isLongBreak = (pomodoroCount + 1) % 4 === 0;
+                return {
+                    title: 'Session complete',
+                    body: isLongBreak ? `Great work — take a ${longBreakMins} minute break` : `Take a ${shortBreakMins} minute break`
+                };
+            }
+            return {
+                title: 'Timer complete',
+                body: tasks[currentIndex] ? `Next: ${tasks[currentIndex].content}` : 'Nothing left in your session'
+            };
+        }
+
+        // Shared tag: an in-app notification and a push for the same event
+        // collapse into one alert instead of both appearing.
+        const TIMER_NOTIFICATION_TAG = 'focus-timer';
+
+        function showTimerNotification() {
+            if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+            try {
+                const { title, body } = timerNotificationText();
+                const n = new Notification(title, { body, silent: true, tag: TIMER_NOTIFICATION_TAG });
+                n.onclick = () => { try { window.focus(); n.close(); } catch (e) {} };
+            } catch (e) { /* ignore */ }
+        }
+
+        // ---- Scheduled lock-screen alerts (web/iOS only) -------------------
+        // The phone freezes our timers the moment the app leaves the foreground,
+        // so the alert for a running timer is booked with the push scheduler up
+        // front and cancelled if the timer stops early.
+        function schedulePushForTimer() {
+            if (!IS_WEB || !window.FocusPush || !FocusPush.isActive()) return;
+            if (!timerRunning || !timerEndTime) return;
+            const { title, body } = timerNotificationText();
+            FocusPush.schedule(timerEndTime, {
+                title, body,
+                tag: TIMER_NOTIFICATION_TAG,
+                intent: 'open',
+                taskId: currentTask() ? String(currentTask().id) : null
+            });
+        }
+
+        function cancelScheduledPush() {
+            if (!IS_WEB || !window.FocusPush || !FocusPush.isActive()) return;
+            FocusPush.cancel();
+        }
+
+        // Every path out of a running timer drops the booked alert, so a paused
+        // or abandoned session can't fire an alarm on your phone later.
+        function pauseTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
+        function stopTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
+        function resetTimer() { stopTimer(); exitOvertime(); timerSeconds = initialTimerSeconds; updateTimerDisplay(); }
+        function setTimer(minutes, seconds = 0) { stopTimer(); exitOvertime(); timerSeconds = minutes * 60 + seconds; initialTimerSeconds = timerSeconds; updateTimerDisplay(); }
+
+        // ---- Overtime ----
+        // Entered only when a challenge-timer countdown reaches zero outside
+        // Pomodoro mode. Time keeps accruing against the task, so the goal
+        // scorecard shown at completion stays honest.
+        function startOvertime() {
+            const t = currentTask();
+            if (!t) return;
+            inOvertime = true;
+            _overtimeTaskId = String(t.id);
+            overtimeStart = Date.now();
+            overtimeSeconds = 0;
+            beginElapsed();
+            clearInterval(overtimeInterval);
+            overtimeInterval = setInterval(() => {
+                overtimeSeconds = Math.max(0, Math.round((Date.now() - overtimeStart) / 1000));
+                updateTimerDisplay();
+            }, 1000);
+            updateTimerDisplay();
+        }
+        function exitOvertime() {
+            if (!inOvertime) return;
+            clearInterval(overtimeInterval); overtimeInterval = null;
+            // Overtime is real focus time — log it on top of the countdown that
+            // was already banked when the timer hit zero.
+            if (overtimeSeconds > 0) bumpStat('focusSeconds', overtimeSeconds);
+            flushElapsed();
+            inOvertime = false; overtimeSeconds = 0; overtimeStart = null; _overtimeTaskId = null;
+        }
+        function stopOvertime() { exitOvertime(); timerSeconds = initialTimerSeconds; updateTimerDisplay(); }
+
+        // Single entry point for every play/pause affordance, so overtime is
+        // handled identically from the button, the ring and the spacebar.
+        function togglePlayPause() {
+            if (inOvertime) { stopOvertime(); return; }
+            timerRunning ? pauseTimer() : startTimer();
+        }
+
+        // One shared AudioContext, created lazily and reused. Creating a fresh
+        // context per sound leaks them — browsers cap live contexts (~6) and
+        // sound silently stops working after enough timer completions.
+        let _audioCtx = null;
+        function getAudioContext() {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return null;
+            if (!_audioCtx) _audioCtx = new AC();
+            // Autoplay policy can leave it suspended until a user gesture.
+            if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(() => {});
+            return _audioCtx;
+        }
+
+        // iOS only lets an AudioContext leave the "suspended" state from inside
+        // a real user gesture. The timer bell fires on a setInterval tick, which
+        // is not one — so without this the very first completion is silent.
+        // Create and unlock the context on the first touch of the session.
+        if (IS_WEB) {
+            const unlockAudio = () => {
+                const ctx = getAudioContext();
+                if (ctx) {
+                    // A zero-gain blip is enough to flip the context to "running".
+                    try {
+                        const g = ctx.createGain(); g.gain.value = 0; g.connect(ctx.destination);
+                        const o = ctx.createOscillator(); o.connect(g);
+                        o.start(); o.stop(ctx.currentTime + 0.01);
+                    } catch (e) { /* nothing to lose if this fails */ }
+                }
+                document.removeEventListener('touchend', unlockAudio);
+                document.removeEventListener('click', unlockAudio);
+            };
+            document.addEventListener('touchend', unlockAudio, { once: false });
+            document.addEventListener('click', unlockAudio, { once: false });
+        }
+
+        // Soft single bell with a quiet octave overtone — rounded, brief, calm.
+        function playTimerSound() {
+            if (!soundEnabled) return;
+            const ctx = getAudioContext();
+            if (!ctx) return;
+            const now = ctx.currentTime;
+            const fund = ctx.createOscillator(), fundG = ctx.createGain();
+            fund.type = 'sine'; fund.frequency.value = 660;
+            fund.connect(fundG); fundG.connect(ctx.destination);
+            fundG.gain.setValueAtTime(0.0001, now);
+            fundG.gain.exponentialRampToValueAtTime(0.28, now + 0.012);
+            fundG.gain.exponentialRampToValueAtTime(0.0005, now + 1.4);
+            fund.start(now); fund.stop(now + 1.45);
+            const harm = ctx.createOscillator(), harmG = ctx.createGain();
+            harm.type = 'sine'; harm.frequency.value = 1320;
+            harm.connect(harmG); harmG.connect(ctx.destination);
+            harmG.gain.setValueAtTime(0.0001, now);
+            harmG.gain.exponentialRampToValueAtTime(0.07, now + 0.008);
+            harmG.gain.exponentialRampToValueAtTime(0.0005, now + 0.85);
+            harm.start(now); harm.stop(now + 0.9);
+        }
+        // Tiny low-pass tick the moment a session begins.
+        function playStartTick() {
+            if (!soundEnabled) return;
+            const ctx = getAudioContext();
+            if (!ctx) return;
+            const now = ctx.currentTime;
+            const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+            o.type = 'sine'; o.frequency.value = 720;
+            f.type = 'lowpass'; f.frequency.value = 1800;
+            o.connect(f); f.connect(g); g.connect(ctx.destination);
+            g.gain.setValueAtTime(0.0001, now);
+            g.gain.exponentialRampToValueAtTime(0.09, now + 0.005);
+            g.gain.exponentialRampToValueAtTime(0.0005, now + 0.08);
+            o.start(now); o.stop(now + 0.1);
+        }
+
+        function beginBreak() {
+            isOnBreak = true;
+            const isLongBreak = pomodoroCount % 4 === 0;
+            const breakDuration = isLongBreak ? LONG_BREAK : SHORT_BREAK;
+            timerSeconds = breakDuration;
+            initialTimerSeconds = breakDuration;
+            updateTimerDisplay();
+            showBreakOverlay(isLongBreak);
+        }
+
+        function handleTimerComplete() {
+            // A task with a time goal never auto-breaks. The estimate running
+            // out is information, not an interruption: the timer rolls into
+            // overtime and keeps counting until the task is actually finished.
+            if (!isOnBreak && goalActive(currentTask())) {
+                if (pomodoroEnabled) {
+                    // Bank the completed session now so the count and the
+                    // every-4 cadence stay right; the break itself waits for
+                    // the task to be closed.
+                    pomodoroCount++;
+                    bumpStat('pomodoros', 1);
+                    _breakPendingTaskId = String(currentTask().id);
+                }
+                startOvertime();
+                return;
+            }
+
+            if (!pomodoroEnabled) {
+                isOnBreak = false; // defensive: never leave break state stuck when pomodoro is off
+                return;
+            }
+
+            if (isOnBreak) {
+                // Break finished, back to work
+                isOnBreak = false;
+                timerManuallySet = false;
+                timerSeconds = taskWorkSeconds();
+                initialTimerSeconds = timerSeconds;
+                updateTimerDisplay();
+                hideBreakOverlay();
+            } else {
+                // Plain Pomodoro work session finished — break immediately.
+                pomodoroCount++;
+                bumpStat('pomodoros', 1);
+                beginBreak();
+            }
+        }
+
+        function showBreakOverlay(isLongBreak) {
+            const overlay = $('breakOverlay');
+            const msg = $('breakMessage');
+            const mins = isLongBreak ? longBreakMins : shortBreakMins;
+            msg.textContent = isLongBreak 
+                ? `Great work! You've completed 4 sessions. Take a ${mins} minute break.`
+                : `Session complete! Take a ${mins} minute break.`;
+            overlay.classList.add('active');
+        }
+
+        function hideBreakOverlay() {
+            $('breakOverlay').classList.remove('active');
+        }
+
+        function skipBreak() {
+            isOnBreak = false;
+            timerManuallySet = false;
+            timerSeconds = taskWorkSeconds();
+            initialTimerSeconds = timerSeconds;
+            stopTimer();
+            updateTimerDisplay();
+            hideBreakOverlay();
+        }
+
+        // Single entry point for all Todoist item syncs. Uses stored delta token
+        // for incremental updates; falls back to a full sync on error or first run.
+        // Returns true if the item store was refreshed, false on network failure
+        // (or when another sync is already in flight).
+        async function syncNow() {
+            if (_syncInFlight) return false; // don't pile up parallel syncs
+            _syncInFlight = true;
+            try {
+                return await _doSync(syncToken || '*');
+            } finally {
+                _syncInFlight = false;
+            }
+        }
+
+        // The sync engine keeps its state blob in a real Todoist task, which
+        // would otherwise show up in Manage Tasks and search. Filter it out at
+        // the item-store level so every downstream view is covered at once.
+        // Matches on project id when we know it, falling back to the task name
+        // on the very first sync (before the id has been cached).
+        function isSyncStoreItem(item) {
+            if (!item) return false;
+            if (item.content !== 'focus-state') return false;
+            try {
+                const ids = JSON.parse(localStorage.getItem('focus_sync_ids_v1') || 'null');
+                if (ids && ids.projectId) return String(item.project_id) === String(ids.projectId);
+            } catch (e) { /* fall through to name match */ }
+            return true;
+        }
+
+        async function _doSync(token) {
+            let res, data;
+            try {
+                res = await fetch('https://api.todoist.com/api/v1/sync', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user"]`
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                data = await res.json();
+                if (!data || !Array.isArray(data.items)) throw new Error('malformed response');
+            } catch (e) {
+                // If we were attempting an incremental sync, drop the token and
+                // retry once with a full sync so stale state can't get stuck.
+                if (token !== '*') {
+                    console.warn('syncNow incremental failed, retrying full sync:', e);
+                    syncToken = null;
+                    return _doSync('*');
+                }
+                // Full sync also failed — leave existing store intact, app stays
+                // usable; report the failure so callers can react (e.g. rollover).
+                console.error('syncNow full sync failed:', e);
+                return false;
+            }
+
+            if (data.user?.id) currentUserId = String(data.user.id);
+
+            if (data.full_sync || token === '*') {
+                // Rebuild store from scratch: only keep active (not completed/deleted) items.
+                itemsById = {};
+                data.items.forEach(item => {
+                    if (!item.checked && !item.is_deleted && !isSyncStoreItem(item)) itemsById[String(item.id)] = item;
+                });
+            } else {
+                // Incremental delta: upsert changed items, remove completed/deleted ones.
+                data.items.forEach(item => {
+                    if (item.checked || item.is_deleted || isSyncStoreItem(item)) {
+                        delete itemsById[String(item.id)];
+                    } else {
+                        itemsById[String(item.id)] = item;
+                    }
+                });
+            }
+
+            syncToken = data.sync_token || syncToken;
+            persistItemStore();
+            _syncSucceededThisRun = true;
+            return true;
+        }
+
+        async function loadProjects() {
+            try {
+                let allProjects = [];
+                let cursor = null;
+                let hasMore = true;
+                while (hasMore) {
+                    const url = new URL('https://api.todoist.com/api/v1/projects');
+                    url.searchParams.set('limit', '200');
+                    if (cursor) url.searchParams.set('cursor', cursor);
+                    const res = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
+                    if (!res.ok) throw new Error('Failed');
+                    const data = await res.json();
+                    if (Array.isArray(data)) {
+                        allProjects = allProjects.concat(data);
+                        hasMore = false;
+                    } else {
+                        allProjects = allProjects.concat(data.results || []);
+                        cursor = data.next_cursor || null;
+                        hasMore = !!cursor;
+                    }
+                }
+                projects = {};
+                allProjects.forEach(p => {
+                    projects[p.id] = p;
+                    if (p.v2_id) projects[p.v2_id] = p; // alias so either ID form resolves
+                });
+                populateFilterSelect();
+                // Sync API may return projects with a different id format than REST.
+                // Alias those too so tasks from /tasks/filter (Sync-style) resolve.
+                try {
+                    const syncRes = await fetch('https://api.todoist.com/api/v1/sync', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'sync_token=*&resource_types=["projects"]'
+                    });
+                    const syncData = await syncRes.json();
+                    syncData.projects?.forEach(sp => {
+                        const target = projects[sp.v2_id] || projects[sp.id];
+                        if (!target) return;
+                        if (sp.id) projects[sp.id] = target;
+                        if (sp.v2_id) projects[sp.v2_id] = target;
+                    });
+                } catch (e) { console.error('project sync alias failed', e); }
+                saveCachedProjects();
+                populateFilterSelect();
+            } catch (e) { console.error(e); }
+        }
+
+        // Merge the current itemsById store into the session queue:
+        // - drop tasks completed/deleted elsewhere (not in store)
+        // - refresh content/metadata for tasks still present
+        // - preserve currentIndex by task id
+        // Shared by refreshSession() and the background poll.
+        function applyItemsToSession() {
+            if (tasks.length === 0) return;
+            // Data-loss guard: if the store recognizes none of the session's
+            // tasks, pruning would empty the whole session. That's only
+            // legitimate after a real sync (everything completed elsewhere);
+            // with a cleared/corrupt store and no successful sync yet
+            // (e.g. offline at launch), keep the session untouched.
+            if (!_syncSucceededThisRun && !tasks.some(t => itemsById[String(t.id)])) return;
+            const currentTaskId = tasks[currentIndex] ? String(tasks[currentIndex].id) : null;
+            const refreshed = [];
+            for (const t of tasks) {
+                const u = itemsById[String(t.id)];
+                if (!u) continue; // completed/deleted elsewhere — drop
+                refreshed.push({
+                    ...t,
+                    content: u.content,
+                    description: u.description,
+                    labels: u.labels,
+                    project_id: u.project_id,
+                    due: u.due,
+                    duration: u.duration,
+                    v2_id: u.v2_id || t.v2_id,
+                    day_order: u.day_order,
+                    child_order: u.child_order,
+                });
+            }
+            tasks = refreshed;
+            const idx = currentTaskId ? tasks.findIndex(t => String(t.id) === currentTaskId) : -1;
+            if (idx >= 0) currentIndex = idx;
+            else if (currentIndex >= tasks.length) currentIndex = Math.max(0, tasks.length - 1);
+        }
+
+        // Refresh metadata for tasks already in the session and prune any
+        // that have been completed/deleted elsewhere. Does NOT add new tasks.
+        async function refreshSession() {
+            if (tasks.length === 0) { renderCurrentTask(); return; }
+            refreshBtn.disabled = true;
+            const originalText = refreshBtn.innerHTML;
+            refreshBtn.innerHTML = 'Refreshing…';
+            try {
+                await syncNow();
+                allTasks = Object.values(itemsById);
+                applyItemsToSession();
+                persistSession();
+                renderCurrentTask();
+                updateCompactBar();
+            } catch (e) { console.error('refresh session failed', e); }
+            finally { refreshBtn.disabled = false; refreshBtn.innerHTML = originalText; }
+        }
+
+        // Day rollover: if the persisted session belongs to a previous local
+        // calendar day, offer a gentle one-click refresh. Never silently
+        // mutates or clears the session — the user stays in control.
+        let _rolloverPromptedFor = null;
+        function checkDayRollover() {
+            if (!apiToken || tasks.length === 0 || !sessionDay) return;
+            const today = localDateKey();
+            if (sessionDay === today) return;
+            if (isCompact) return; // retry on expand/next poll — prompt is hidden in pill mode
+            if (_rolloverPromptedFor === today) return;
+            _rolloverPromptedFor = today;
+            $('rolloverPrompt').classList.add('visible');
+        }
+
+        function clearAllSessionTasks() {
+            if (tasks.length === 0) return;
+            if (!confirm(`Remove all ${tasks.length} task${tasks.length === 1 ? '' : 's'} from your session?`)) return;
+            tasks = [];
+            currentIndex = 0;
+            sessionDay = localDateKey();
+            persistSession();
+            renderTaskList();
+            renderCurrentTask();
+            updateCompactBar();
+            if (allTasks.length > 0) searchTasks(taskSearchInput.value);
+        }
+
+        async function addTodayTasksToSession() {
+            loadTodayBtn.disabled = true;
+            const originalText = loadTodayBtn.textContent;
+            loadTodayBtn.textContent = 'Loading…';
+            try {
+                if (allTasks.length === 0) await loadAllTasks();
+                const todayTasks = allTasks
+                    .filter(t => isTodayOrOverdue(t) && (!t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId))
+                    .sort(todayViewOrder);
+                const existingIds = new Set(tasks.map(t => String(t.id)));
+                let added = 0;
+                for (const t of todayTasks) {
+                    if (!existingIds.has(String(t.id))) { tasks.push(t); added++; }
+                }
+                sessionDay = localDateKey();
+                persistSession();
+                renderTaskList();
+                renderCurrentTask();
+                updateCompactBar();
+                if (taskSearchInput) searchTasks(taskSearchInput.value);
+                loadTodayBtn.textContent = added > 0 ? `Added ${added}` : 'All in session';
+                setTimeout(() => { loadTodayBtn.textContent = originalText; }, 1500);
+            } catch (e) {
+                console.error(e);
+                loadTodayBtn.textContent = originalText;
+            }
+            finally { loadTodayBtn.disabled = false; }
+        }
+
+        // Resolve a saved Todoist filter's *live* query string by name
+        // (case-insensitive substring match). Fetched fresh each call so any
+        // edits made to the filter in Todoist are always reflected. Returns
+        // null if no saved filter matches.
+        async function getSavedFilterQuery(nameNeedle) {
+            const needle = nameNeedle.toLowerCase();
+            const res = await fetch('https://api.todoist.com/api/v1/sync', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'sync_token=*&resource_types=["filters"]'
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const filters = Array.isArray(data.filters) ? data.filters : [];
+            const match = filters.find(f => (f.name || '').toLowerCase().includes(needle));
+            return match ? match.query : null;
+        }
+
+        // Fetch every task matching a Todoist filter query (evaluated server-side),
+        // following cursor pagination. Returns Sync-style task objects.
+        async function fetchFilterTasks(query) {
+            let results = [], cursor = null, hasMore = true;
+            while (hasMore) {
+                const url = new URL('https://api.todoist.com/api/v1/tasks/filter');
+                url.searchParams.set('query', query);
+                url.searchParams.set('limit', '200');
+                if (cursor) url.searchParams.set('cursor', cursor);
+                const res = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                if (Array.isArray(data)) { results = results.concat(data); hasMore = false; }
+                else { results = results.concat(data.results || []); cursor = data.next_cursor || null; hasMore = !!cursor; }
+            }
+            return results;
+        }
+
+        // The Manage Tasks "+ Weekly Planner" button references this saved filter
+        // by name, so changing the filter's query in Todoist needs no code change.
+        const WEEKLY_PLANNER_FILTER_NAME = 'Weekly Planner';
+
+        async function addWeeklyPlannerTasksToSession() {
+            loadPlannerBtn.disabled = true;
+            const originalText = loadPlannerBtn.textContent;
+            loadPlannerBtn.textContent = 'Loading…';
+            try {
+                const query = await getSavedFilterQuery(WEEKLY_PLANNER_FILTER_NAME);
+                if (!query) {
+                    loadPlannerBtn.textContent = 'Filter not found';
+                    setTimeout(() => { loadPlannerBtn.textContent = originalText; }, 2000);
+                    return;
+                }
+                const plannerTasks = (await fetchFilterTasks(query))
+                    .filter(t => !t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId)
+                    .sort(todayViewOrder);
+                const existingIds = new Set(tasks.map(t => String(t.id)));
+                let added = 0;
+                for (const t of plannerTasks) {
+                    if (!existingIds.has(String(t.id))) { tasks.push(t); added++; }
+                }
+                sessionDay = localDateKey();
+                persistSession();
+                renderTaskList();
+                renderCurrentTask();
+                updateCompactBar();
+                if (taskSearchInput) searchTasks(taskSearchInput.value);
+                loadPlannerBtn.textContent = added > 0 ? `Added ${added}` : 'All in session';
+                setTimeout(() => { loadPlannerBtn.textContent = originalText; }, 1500);
+            } catch (e) {
+                console.error(e);
+                loadPlannerBtn.textContent = 'Error';
+                setTimeout(() => { loadPlannerBtn.textContent = originalText; }, 2000);
+            }
+            finally { loadPlannerBtn.disabled = false; }
+        }
+
+        // Overtime belongs to the task whose goal ran out, so leaving that task
+        // ends it and re-arms the timer for whatever comes next.
+        function leaveCurrentTaskTimer() {
+            if (!inOvertime) return;
+            exitOvertime();
+            timerSeconds = initialTimerSeconds;
+        }
+        function goToNextTask() { if (tasks.length > 1) { leaveCurrentTaskTimer(); currentIndex = (currentIndex + 1) % tasks.length; persistSession(); renderCurrentTask(); } }
+        function goToPrevTask() { if (tasks.length > 1) { leaveCurrentTaskTimer(); currentIndex = (currentIndex - 1 + tasks.length) % tasks.length; persistSession(); renderCurrentTask(); } }
+
+        function renderCurrentTask() {
+            const ctxBar = $('taskContextBar');
+            // Overtime is scoped to one task. Catch every way it can stop being
+            // the current one — including a background sync pruning it after it
+            // was completed in Todoist — in the single place they all funnel through.
+            if (inOvertime) {
+                const cur = tasks[currentIndex];
+                if (!cur || String(cur.id) !== _overtimeTaskId) { exitOvertime(); timerSeconds = initialTimerSeconds; }
+            }
+            if (tasks.length === 0) {
+                taskArea.innerHTML = '<div class="empty-state"><p class="empty-quote">Nothing scheduled. Take a breath.</p><button class="empty-cta" id="emptyAddBtn">Add tasks</button></div>';
+                taskCounter.textContent = '';
+                if (ctxBar) ctxBar.style.display = 'none';
+                skipBtn.disabled = true; prevBtn.disabled = true; completeBtn.disabled = true; dropBtn.disabled = true;
+                updateCompactBar();
+                applyTaskDurationIfIdle();
+                return;
+            }
+            if (ctxBar) ctxBar.style.display = 'flex';
+            skipBtn.disabled = tasks.length <= 1; prevBtn.disabled = tasks.length <= 1; completeBtn.disabled = false; dropBtn.disabled = false;
+            const task = tasks[currentIndex], project = projects[task.project_id];
+            const projName = project ? project.name : 'Inbox';
+            const dotColor = projectColor(project);
+            let dueText = '', dueClass = '';
+            if (task.due) {
+                const dueDate = new Date(task.due.date.slice(0, 10) + 'T00:00:00'), today = new Date(); today.setHours(0,0,0,0);
+                const diff = Math.floor((dueDate - today) / 86400000);
+                if (diff < 0) { dueText = `${Math.abs(diff)} day${Math.abs(diff) > 1 ? 's' : ''} overdue`; dueClass = 'overdue'; }
+                else if (diff === 0) dueText = 'Due today';
+                else if (diff === 1) dueText = 'Due tomorrow';
+                else dueText = `Due in ${diff} days`;
+            }
+            taskCounter.textContent = `${currentIndex + 1} of ${tasks.length}`;
+            const durMins = task.duration && task.duration.unit === 'minute' ? Number(task.duration.amount) : NaN;
+            // Only surface the Todoist estimate when it's actually driving the
+            // timer — a task goal overrides it, and then showing both is noise.
+            const durHtml = (Number.isFinite(durMins) && durMins > 0 && useTaskDurations && !goalActive(task))
+                ? `<div class="task-due" title="Timer set from this task's Todoist estimate">~${durMins} min</div>` : '';
+            taskArea.innerHTML = `<div class="task-block" id="taskBlock"><div class="task-block-row"><span class="task-project-dot" style="background:${dotColor}" title="${escHtml(projName)}"></span><a class="task-content" id="taskLink" title="${escHtml(projName)} — open in Todoist">${escHtml(task.content)}</a></div>${dueText ? `<div class="task-due ${dueClass}">${dueText}</div>` : ''}${durHtml}<div>${goalChipHtml(task)}</div></div>`;
+            $('taskLink').addEventListener('click', (e) => { e.preventDefault(); openTaskInTodoist(task.v2_id, task.id); });
+            // Keep time-on-task accruing against whatever task is now showing.
+            if ((timerRunning || inOvertime) && _elapsedTaskId !== String(task.id)) { flushElapsed(); beginElapsed(); }
+            updateCompactBar();
+            applyTaskDurationIfIdle();
+        }
+
+        const CLOCK_SVG = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 7v5l3 2"/></svg>';
+
+        // The chip under the current task: shows the goal and how you're doing
+        // against it. Body opens the editor, mini-switch flips it on/off.
+        function goalChipHtml(task) {
+            const g = goalFor(task);
+            if (!g) {
+                return `<div class="goal-chip unset" role="button" tabindex="0" id="goalChip" title="Set a time goal for this task (E)">${CLOCK_SVG}<span>Set time goal</span></div>`;
+            }
+            const spent = elapsedFor(task.id);
+            const goalSecs = g.minutes * 60;
+            let state = g.enabled ? 'on' : 'off';
+            let spentHtml = '';
+            if (spent >= 30) {
+                spentHtml = `<span class="goal-spent">· ${fmtDuration(spent)} in</span>`;
+                if (g.enabled) state = spent > goalSecs ? 'over' : 'on';
+            }
+            const title = g.enabled
+                ? `Challenge timer on — ${g.minutes} min goal. Click to edit, or use the switch to turn it off.`
+                : `Time goal set to ${g.minutes} min but switched off. Click the switch to turn it on.`;
+            return `<div class="goal-chip ${state}" role="button" tabindex="0" id="goalChip" title="${escHtml(title)}">`
+                + `${CLOCK_SVG}<span>${g.minutes} min goal</span>${spentHtml}`
+                + `<span class="mini-switch${g.enabled ? ' on' : ''}" id="goalQuickToggle" title="${g.enabled ? 'Turn off' : 'Turn on'} for this task (G)"></span></div>`;
+        }
+
+        // Patch the chip's live parts each tick instead of re-rendering the task
+        // block, which would blow away focus and restart the fade animation.
+        function updateGoalChipLive() {
+            const chip = $('goalChip');
+            if (!chip) return;
+            const task = currentTask();
+            const g = goalFor(task);
+            if (!g) return;
+            const spent = elapsedFor(task.id);
+            let spentEl = chip.querySelector('.goal-spent');
+            if (spent >= 30) {
+                const label = `· ${fmtDuration(spent)} in`;
+                if (!spentEl) {
+                    spentEl = document.createElement('span');
+                    spentEl.className = 'goal-spent';
+                    chip.insertBefore(spentEl, chip.querySelector('.mini-switch'));
+                }
+                if (spentEl.textContent !== label) spentEl.textContent = label;
+            } else if (spentEl) {
+                spentEl.remove();
+            }
+            const state = !g.enabled ? 'off' : (spent >= 30 && spent > g.minutes * 60 ? 'over' : 'on');
+            chip.classList.remove('on', 'off', 'over', 'unset');
+            chip.classList.add(state);
+        }
+
+        // ---- Goal editor ----
+        const goalOverlay = $('goalOverlay'), goalTaskName = $('goalTaskName'), goalEnabledToggle = $('goalEnabledToggle');
+        const goalMinutesInput = $('goalMinutes'), goalPresets = $('goalPresets'), goalFields = $('goalFields');
+        const goalSaveBtn = $('goalSave'), goalCancelBtn = $('goalCancel'), goalRemoveBtn = $('goalRemove');
+        // Keyed by task id, not index: the 45s background poll can prune tasks
+        // while the editor is open, and an index would then point at a
+        // different task by the time Save is pressed.
+        let _goalEditTaskId = null;
+        function goalEditTask() {
+            return _goalEditTaskId === null ? null : tasks.find(t => String(t.id) === _goalEditTaskId) || null;
+        }
+
+        function syncGoalPresets() {
+            const val = parseInt(goalMinutesInput.value);
+            goalPresets.querySelectorAll('.goal-preset').forEach(b => {
+                b.classList.toggle('selected', parseInt(b.dataset.mins) === val);
+            });
+            goalFields.classList.toggle('goal-disabled', !goalEnabledToggle.checked);
+        }
+
+        function openGoalModal(index) {
+            const task = tasks[index];
+            if (!task) return;
+            // The pill is too small to host a modal — expand first.
+            if (isCompact) toggleCompactMode();
+            _goalEditTaskId = String(task.id);
+            const g = goalFor(task);
+            goalTaskName.textContent = task.content;
+            goalEnabledToggle.checked = g ? !!g.enabled : true;
+            // Seed a new goal from the Todoist estimate when there is one.
+            const durMins = task.duration && task.duration.unit === 'minute' ? Number(task.duration.amount) : NaN;
+            goalMinutesInput.value = g ? g.minutes : (Number.isFinite(durMins) && durMins > 0 ? Math.min(durMins, 999) : 15);
+            goalRemoveBtn.classList.toggle('hidden', !g);
+            syncGoalPresets();
+            goalOverlay.classList.add('active');
+            goalMinutesInput.focus();
+            goalMinutesInput.select();
+        }
+        function closeGoalModal() { goalOverlay.classList.remove('active'); _goalEditTaskId = null; }
+
+        // Re-render every surface a goal can appear on.
+        function refreshGoalViews() {
+            renderCurrentTask();
+            if (taskOrderOverlay.classList.contains('active')) renderTaskList();
+        }
+
+        function saveGoalFromModal() {
+            const task = goalEditTask();
+            if (!task) { closeGoalModal(); return; }
+            const mins = Math.min(999, Math.max(1, parseInt(goalMinutesInput.value) || 0));
+            const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
+            taskGoals[String(task.id)] = { minutes: mins, enabled: goalEnabledToggle.checked, ts: Date.now() };
+            saveGoals();
+            closeGoalModal();
+            // The user just asked for this length, so re-arm the timer to match.
+            if (wasCurrent) armTimerForCurrentTask();
+            refreshGoalViews();
+        }
+
+        function removeGoalFromModal() {
+            const task = goalEditTask();
+            if (!task) { closeGoalModal(); return; }
+            const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
+            delete taskGoals[String(task.id)];
+            saveGoals();
+            closeGoalModal();
+            if (wasCurrent) armTimerForCurrentTask();
+            refreshGoalViews();
+        }
+
+        // Quick on/off from the chip's mini-switch or the G shortcut. With no
+        // goal yet there's nothing to toggle, so open the editor instead.
+        function toggleGoalForTask(index) {
+            const task = tasks[index];
+            if (!task) return;
+            const g = goalFor(task);
+            if (!g) { openGoalModal(index); return; }
+            taskGoals[String(task.id)] = { ...g, enabled: !g.enabled, ts: Date.now() };
+            saveGoals();
+            if (index === currentIndex) armTimerForCurrentTask();
+            refreshGoalViews();
+            showToast(!g.enabled ? `Challenge timer on — ${g.minutes} min` : 'Challenge timer off');
+        }
+
+        // Scorecard shown when a task with an active goal is completed.
+        function goalOutcome(task) {
+            const g = goalFor(task);
+            if (!g || !g.enabled) return null;
+            const spent = elapsedFor(task.id);
+            if (spent < 30) return null; // never really timed — nothing honest to say
+            const diff = g.minutes * 60 - spent;
+            // Within half a minute either way isn't a win or a loss — it's a hit.
+            if (Math.abs(diff) < 30) return { beat: true, message: `Right on your ${g.minutes} min goal` };
+            return {
+                beat: diff > 0,
+                message: diff > 0
+                    ? `Beat your ${g.minutes} min goal by ${fmtDuration(diff)}`
+                    : `${fmtDuration(diff)} over your ${g.minutes} min goal`
+            };
+        }
+
+        // Guard: Enter auto-repeat / double-press must not complete two tasks
+        let _completing = false;
+        async function completeTask() {
+            if (_completing || tasks.length === 0) return;
+            _completing = true;
+            const task = tasks[currentIndex];
+            const savedIndex = currentIndex;
+            const block = $('taskBlock');
+            const wasLastTask = tasks.length === 1;
+            // Score against the time goal before any state is torn down.
+            const outcome = goalOutcome(task);
+            if (savedIndex === currentIndex) exitOvertime();
+            flushElapsed();
+
+            // Optimistic: animate out, remove from queue and item store immediately.
+            if (block) block.classList.add('completing');
+            completeBtn.disabled = true;
+
+            tasks.splice(savedIndex, 1);
+            if (currentIndex >= tasks.length && tasks.length > 0) currentIndex = 0;
+            delete itemsById[String(task.id)];
+            persistItemStore();
+            persistSession();
+
+            if (wasLastTask) fireConfetti();
+            setTimeout(() => { renderCurrentTask(); _completing = false; }, 280);
+
+            // Fire the network call in the background — re-insert on failure.
+            try {
+                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${apiToken}` }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                // Log only after Todoist confirms the close — the rollback path
+                // below then never needs to decrement anything.
+                const day = bumpStat('tasksCompleted', 1);
+                if (outcome) {
+                    if (outcome.beat) bumpStat('goalsBeaten', 1);
+                    showToast(outcome.beat ? `${outcome.message} 🎉` : outcome.message);
+                } else if (day.tasksCompleted === 1) {
+                    const streak = computeStreak(loadStats());
+                    if (streak >= 2) showToast(`${streak}-day streak`);
+                }
+                // The task is closed for good — stop carrying its goal/elapsed.
+                clearTaskTracking(task.id);
+                // The break its overtime deferred is now due.
+                if (_breakPendingTaskId === String(task.id)) {
+                    _breakPendingTaskId = null;
+                    if (pomodoroEnabled) beginBreak();
+                }
+            } catch (e) {
+                // Restore task at its original position (clamped to current length).
+                const restoreAt = Math.min(savedIndex, tasks.length);
+                tasks.splice(restoreAt, 0, task);
+                currentIndex = restoreAt;
+                itemsById[String(task.id)] = task;
+                persistItemStore();
+                persistSession();
+                _completing = false;
+                renderCurrentTask();
+                showToast("Couldn't complete — task restored");
+            }
+        }
+
+        // Complete any row in the Manage Tasks list, not just the focused task.
+        // Delegates to completeTask() when it IS the focused one so the timer,
+        // overtime, goal scorecard and confetti all behave exactly as normal.
+        async function completeTaskAt(index, btn) {
+            if (index < 0 || index >= tasks.length) return;
+            if (index === currentIndex) { await completeTask(); renderTaskList(); return; }
+
+            const task = tasks[index];
+            if (btn) btn.disabled = true;
+
+            // Optimistic removal, mirroring completeTask()'s ordering.
+            tasks.splice(index, 1);
+            // Keep the focused task focused: indices above the removed row shift down.
+            if (currentIndex > index) currentIndex--;
+            if (_breakPendingTaskId === String(task.id)) _breakPendingTaskId = null;
+            delete itemsById[String(task.id)];
+            persistItemStore();
+            persistSession();
+            renderTaskList();
+            renderCurrentTask();
+            updateCompactBar();
+
+            try {
+                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${apiToken}` }
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                bumpStat('tasksCompleted', 1);
+                clearTaskTracking(task.id);
+                showToast(`Completed — ${task.content.length > 34 ? task.content.slice(0, 34) + '…' : task.content}`);
+            } catch (e) {
+                // Put it back where it was so a flaky network can't silently eat a task.
+                const restoreAt = Math.min(index, tasks.length);
+                tasks.splice(restoreAt, 0, task);
+                if (currentIndex >= restoreAt) currentIndex++;
+                itemsById[String(task.id)] = task;
+                persistItemStore();
+                persistSession();
+                renderTaskList();
+                renderCurrentTask();
+                updateCompactBar();
+                showToast("Couldn't complete — task restored");
+            }
+        }
+
+        function skipTaskFromSession() {
+            if (tasks.length === 0) return;
+            removeTaskFromSession(currentIndex);
+        }
+
+        function removeTaskFromSession(index) {
+            if (tasks.length === 0 || index < 0 || index >= tasks.length) return;
+            if (index === currentIndex) leaveCurrentTaskTimer();
+            // Dropped without being finished — the owed break goes with it.
+            if (_breakPendingTaskId === String(tasks[index].id)) _breakPendingTaskId = null;
+            tasks.splice(index, 1);
+            if (index <= currentIndex && currentIndex > 0) currentIndex--;
+            if (currentIndex >= tasks.length && tasks.length > 0) currentIndex = tasks.length - 1;
+            if (tasks.length === 0) currentIndex = 0;
+            persistSession();
+            renderCurrentTask();
+            updateCompactBar();
+            if (taskOrderOverlay.classList.contains('active')) renderTaskList();
+        }
+
+        // Static HTML fragments — built once, reused every render
+        const DRAG_HANDLE_HTML = '<span class="drag-handle"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg></span>';
+        const REMOVE_BTN_HTML = '<button class="task-remove-btn" title="Remove from session"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>';
+        // Completes the task in Todoist. Deliberately distinct from the × next to
+        // it, which only drops the task from this session and leaves it open.
+        const DONE_BTN_HTML = '<button class="task-done-btn" title="Complete task (syncs to Todoist)"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg></button>';
+        let draggedIndex = null;
+
+        function clearDragIndicators() {
+            taskList.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(x => x.classList.remove('drag-over-top', 'drag-over-bottom'));
+        }
+
+        // Given cursor Y, find which item to drop next to and which side.
+        // Returns { targetIdx, insertBefore, el } or null.
+        function computeDropTarget(clientY) {
+            const items = taskList.querySelectorAll('.task-item:not(.dragging)');
+            if (items.length === 0) return null;
+            for (const item of items) {
+                const rect = item.getBoundingClientRect();
+                if (clientY < rect.top + rect.height / 2) {
+                    return { targetIdx: parseInt(item.dataset.index), insertBefore: true, el: item };
+                }
+                if (clientY < rect.bottom) {
+                    return { targetIdx: parseInt(item.dataset.index), insertBefore: false, el: item };
+                }
+            }
+            const last = items[items.length - 1];
+            return { targetIdx: parseInt(last.dataset.index), insertBefore: false, el: last };
+        }
+
+        function renderTaskList() {
+            const divider = document.getElementById('sessionDivider');
+            if (divider) divider.textContent = tasks.length > 0 ? `Current Session (${tasks.length})` : 'Current Session';
+
+            if (tasks.length === 0) {
+                taskList.innerHTML = '<p style="text-align:center;color:var(--text-secondary);padding:1rem;font-size:0.9rem;">Search above to add tasks</p>';
+                return;
+            }
+
+            // Build all items in one pass, then single innerHTML write
+            taskList.innerHTML = tasks.map((task, i) => {
+                const project = projects[task.project_id];
+                const projectName = project ? escHtml(project.name) : 'Inbox';
+                const labelsHtml = (task.labels && task.labels.length)
+                    ? `<span class="task-item-labels">${task.labels.map(l => `<span class="task-label-pill">${escHtml(l)}</span>`).join('')}</span>`
+                    : '';
+                const g = goalFor(task);
+                const goalCls = g ? (g.enabled ? ' on' : ' paused') : '';
+                const goalTitle = g
+                    ? (g.enabled ? `Challenge timer on — ${g.minutes} min goal` : `${g.minutes} min goal (switched off)`)
+                    : 'Set a time goal';
+                const goalBtn = `<button class="task-goal-btn${goalCls}" title="${escHtml(goalTitle)}">${CLOCK_SVG}${g ? `<span>${g.minutes}</span>` : ''}</button>`;
+                return `<div class="task-item${i === currentIndex ? ' current' : ''}" draggable="true" data-index="${i}">${DONE_BTN_HTML}${DRAG_HANDLE_HTML}<span class="task-item-content">${escHtml(task.content)}</span>${labelsHtml}<span class="task-item-project">${projectName}</span>${goalBtn}${REMOVE_BTN_HTML}</div>`;
+            }).join('');
+        }
+
+        // Delegated event listeners — attached once, handle any task item.
+        // Fixes the "can't drop above top item" bug naturally: dragover fires
+        // for any cursor position inside taskList, including padding above the
+        // first item, and computeDropTarget returns insertBefore:true there.
+
+        // X button: use pointerdown/pointerup. Native click is unreliable
+        // because the parent .task-item is draggable=true and Electron/macOS
+        // can suppress click events after the slightest mouse drift. Pointer
+        // events fire synchronously regardless of drag state. We also flip
+        // draggable=false on mousedown so a drag never even starts.
+        // The goal button in each row rides the same mechanism for the same reason.
+        const ROW_BTN_SEL = '.task-remove-btn, .task-goal-btn, .task-done-btn';
+        let _xPointerDown = null;
+        taskList.addEventListener('pointerdown', e => {
+            _xPointerDown = e.target.closest(ROW_BTN_SEL) || null;
+            if (_xPointerDown) {
+                const item = _xPointerDown.closest('.task-item');
+                if (item) {
+                    item.draggable = false;
+                    const restore = () => { item.draggable = true; document.removeEventListener('mouseup', restore); };
+                    document.addEventListener('mouseup', restore);
+                }
+            }
+        });
+        taskList.addEventListener('pointerup', e => {
+            const upBtn = e.target.closest(ROW_BTN_SEL);
+            if (_xPointerDown && upBtn === _xPointerDown) {
+                e.stopPropagation();
+                e.preventDefault();
+                const item = upBtn.closest('.task-item');
+                if (item) {
+                    const idx = parseInt(item.dataset.index);
+                    if (upBtn.classList.contains('task-goal-btn')) openGoalModal(idx);
+                    else if (upBtn.classList.contains('task-done-btn')) completeTaskAt(idx, upBtn);
+                    else removeTaskFromSession(idx);
+                }
+            }
+            _xPointerDown = null;
+        });
+        taskList.addEventListener('dragstart', e => {
+            const item = e.target.closest('.task-item');
+            if (!item) return;
+            draggedIndex = parseInt(item.dataset.index);
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        taskList.addEventListener('dragend', e => {
+            const item = e.target.closest('.task-item');
+            if (item) item.classList.remove('dragging');
+            clearDragIndicators();
+            draggedIndex = null;
+        });
+        taskList.addEventListener('dragover', e => {
+            if (draggedIndex === null) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            clearDragIndicators();
+            const target = computeDropTarget(e.clientY);
+            if (target && target.targetIdx !== draggedIndex) {
+                target.el.classList.add(target.insertBefore ? 'drag-over-top' : 'drag-over-bottom');
+            }
+            // Auto-scroll near top/bottom edges
+            const listRect = taskList.getBoundingClientRect();
+            if (e.clientY < listRect.top + 40) taskList.scrollTop -= 8;
+            else if (e.clientY > listRect.bottom - 40) taskList.scrollTop += 8;
+        });
+        taskList.addEventListener('dragleave', e => {
+            if (!taskList.contains(e.relatedTarget)) clearDragIndicators();
+        });
+        taskList.addEventListener('drop', e => {
+            if (draggedIndex === null) return;
+            e.preventDefault();
+            const target = computeDropTarget(e.clientY);
+            clearDragIndicators();
+            if (!target || target.targetIdx === draggedIndex) return;
+
+            let dropIdx = target.targetIdx;
+            if (draggedIndex < dropIdx) dropIdx--;
+            if (!target.insertBefore) dropIdx++;
+
+            const [t] = tasks.splice(draggedIndex, 1);
+            tasks.splice(dropIdx, 0, t);
+
+            if (currentIndex === draggedIndex) currentIndex = dropIdx;
+            else if (draggedIndex < currentIndex && dropIdx >= currentIndex) currentIndex--;
+            else if (draggedIndex > currentIndex && dropIdx <= currentIndex) currentIndex++;
+
+            persistSession();
+            renderTaskList();
+            renderCurrentTask();
+        });
+        taskList.addEventListener('click', e => {
+            const item = e.target.closest('.task-item');
+            if (!item) return;
+            // Row buttons are handled in pointerup; ignore here to avoid double-fire.
+            if (e.target.closest(ROW_BTN_SEL)) return;
+            const idx = parseInt(item.dataset.index);
+            if (e.target.closest('.task-item-content')) {
+                currentIndex = idx;
+                persistSession();
+                renderCurrentTask();
+                renderTaskList();
+            }
+        });
+
+        async function loadAllTasks() {
+            // Sync API returns items with all fields (v2_id, day_order, responsible_uid,
+            // etc.) — no separate REST pagination loop or decoration pass needed.
+            await syncNow();
+            allTasks = Object.values(itemsById);
+        }
+
+        function isTodayOrOverdue(task) {
+            if (!task.due || !task.due.date) return false;
+            // Handle both date-only ("YYYY-MM-DD") and datetime ("YYYY-MM-DDTHH:mm:ss") values.
+            const dueDate = new Date(task.due.date.slice(0, 10) + 'T00:00:00');
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            return dueDate.getTime() <= today.getTime();
+        }
+
+        // Sort key matching Todoist's Today view order. day_order < 0 means
+        // "unpositioned" — Todoist shows those last, so push them to the end.
+        function todayViewOrder(a, b) {
+            const key = t => (t.day_order != null && t.day_order >= 0) ? t.day_order : Infinity;
+            return key(a) - key(b);
+        }
+
+        function searchTasks(query) {
+            const q = query.trim().toLowerCase();
+            let matches;
+            if (!q) {
+                // Empty query → default to today's and overdue tasks in Todoist's
+                // Today view order, hiding tasks assigned to other people.
+                matches = allTasks
+                    .filter(t => isTodayOrOverdue(t) && (!t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId))
+                    .sort(todayViewOrder);
+            } else {
+                matches = allTasks.filter(task =>
+                    task.content.toLowerCase().includes(q) ||
+                    (task.description || '').toLowerCase().includes(q) ||
+                    (projects[task.project_id]?.name || '').toLowerCase().includes(q) ||
+                    (task.labels || []).some(l => l.toLowerCase().includes(q))
+                );
+            }
+            renderSearchResults(matches);
+        }
+
+        function renderSearchResults(results) {
+            selectedSearchIndex = -1;
+            searchResults.innerHTML = '';
+            
+            if (results.length === 0) {
+                searchResults.innerHTML = '<div class="search-empty">No tasks found</div>';
+                return;
+            }
+            
+            const sessionIds = new Set(tasks.map(t => t.id));
+            
+            results.forEach(task => {
+                const project = projects[task.project_id];
+                const inSession = sessionIds.has(task.id);
+                const item = document.createElement('div');
+                item.className = `search-result-item${inSession ? ' in-session' : ''}`;
+                
+                let metaText = project ? project.name : 'Inbox';
+                if (task.due) {
+                    const dueDate = new Date(task.due.date.slice(0, 10) + 'T00:00:00');
+                    const today = new Date(); today.setHours(0,0,0,0);
+                    const diff = Math.floor((dueDate - today) / 86400000);
+                    if (diff < 0) metaText += ' · Overdue';
+                    else if (diff === 0) metaText += ' · Today';
+                    else if (diff === 1) metaText += ' · Tomorrow';
+                    else metaText += ` · ${task.due.date}`;
+                }
+                
+                const labelsHtml = (task.labels && task.labels.length)
+                    ? `<span class="search-result-labels">${task.labels.map(l => `<span class="task-label-pill">${escHtml(l)}</span>`).join('')}</span>`
+                    : '';
+                item.innerHTML = `
+                    <span class="search-result-content">${escHtml(task.content)}${labelsHtml}</span>
+                    <span class="search-result-meta">${escHtml(metaText)}</span>
+                    ${inSession ? '<span class="search-result-add" style="color:var(--text-secondary);">✓</span>' : '<span class="search-result-add">+</span>'}
+                `;
+                
+                if (!inSession) {
+                    item.addEventListener('click', () => addTaskToSession(task));
+                }
+                
+                searchResults.appendChild(item);
+            });
+        }
+
+        function addTaskToSession(task) {
+            if (tasks.some(t => t.id === task.id)) return;
+            tasks.push(task);
+            sessionDay = localDateKey();
+            persistSession();
+            renderTaskList();
+            searchTasks(taskSearchInput.value);
+            updateCompactBar();
+            renderCurrentTask();
+            taskSearchInput.focus();
+            taskSearchInput.select();
+        }
+
+        function showLoading() { taskArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>'; }
+        function showFocusScreen() { setupScreen.classList.add('hidden'); focusScreen.classList.add('active'); }
+        function showSetupScreen() { setupScreen.classList.remove('hidden'); focusScreen.classList.remove('active'); }
+
+        connectBtn.addEventListener('click', async () => {
+            const token = apiTokenInput.value.trim(); if (!token) { alert('Please enter your API token'); return; }
+            connectBtn.disabled = true; connectBtn.textContent = 'Connecting...';
+            try {
+                const res = await fetch('https://api.todoist.com/api/v1/projects', { headers: { 'Authorization': `Bearer ${token}` } });
+                if (res.status === 401 || res.status === 403) {
+                    alert('Invalid API token. Please check your token and try again.');
+                    return;
+                }
+                if (!res.ok) {
+                    alert(`Connection failed (${res.status}): ${res.statusText}`);
+                    return;
+                }
+                apiToken = token; selectedFilter = filterSelect.value;
+                if (focusBridge) { await focusBridge.setToken(apiToken); } else { localStorage.setItem('todoist_api_token', apiToken); }
+                localStorage.setItem('todoist_filter', selectedFilter);
+                // Save pomodoro settings
+                workDurationMins = parseInt(workDurationInput.value) || 25;
+                shortBreakMins = parseInt(shortBreakInput.value) || 5;
+                longBreakMins = parseInt(longBreakInput.value) || 15;
+                localStorage.setItem('pomodoro_work', workDurationMins);
+                localStorage.setItem('pomodoro_short', shortBreakMins);
+                localStorage.setItem('pomodoro_long', longBreakMins);
+                WORK_DURATION = workDurationMins * 60; SHORT_BREAK = shortBreakMins * 60; LONG_BREAK = longBreakMins * 60;
+                // Stamp + push settings so the other device picks them up.
+                _settingsAt = Date.now();
+                localStorage.setItem('focus_settings_at', String(_settingsAt));
+                initSync();      // no-op once running; starts sync on first connect
+                scheduleSync();
+                if (!pomodoroEnabled && isOnBreak) {
+                    // Pomodoro was turned off mid-break: clear the break state,
+                    // otherwise the !isOnBreak guards suppress focus logging and
+                    // duration syncing until restart (mirrors skipBreak).
+                    isOnBreak = false;
+                    timerManuallySet = false;
+                    if (timerRunning) stopTimer(); // the running countdown was the break's
+                    hideBreakOverlay();
+                }
+                // Task estimate wins when present; work duration is the fallback —
+                // arm via taskWorkSeconds() so the display shows the value that
+                // will actually be used (applyTaskDurationIfIdle agrees).
+                if (!isOnBreak) { const secs = taskWorkSeconds(); timerSeconds = secs; initialTimerSeconds = secs; updateTimerDisplay(); }
+                showFocusScreen(); restoreSession(); renderCurrentTask(); updateCompactBar();
+                loadProjects().then(() => renderCurrentTask());
+                loadAllTasks();
+            } catch (e) { alert('Network error: Could not connect to Todoist. Check your internet connection.'); console.error(e); }
+            finally { connectBtn.disabled = false; connectBtn.textContent = 'Connect & Start Focusing'; }
+        });
+
+        settingsBtn.addEventListener('click', () => {
+            // Render from cached projects instantly; refresh in the background.
+            populateFilterSelect();
+            filterSelect.value = selectedFilter;
+            soundToggle.checked = soundEnabled;
+            pomodoroToggle.checked = pomodoroEnabled;
+            taskDurationToggle.checked = useTaskDurations;
+            pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
+            workDurationInput.value = workDurationMins;
+            shortBreakInput.value = shortBreakMins;
+            longBreakInput.value = longBreakMins;
+            cancelSettingsBtn.classList.toggle('hidden', !apiToken);
+            showSetupScreen();
+            loadProjects().then(() => { filterSelect.value = selectedFilter; });
+        });
+
+        // Back to tasks without re-validating. Restore the form values from
+        // persisted state so any unsaved tweaks don't leak forward.
+        cancelSettingsBtn.addEventListener('click', () => {
+            apiTokenInput.value = apiToken;
+            filterSelect.value = selectedFilter;
+            soundToggle.checked = soundEnabled;
+            pomodoroToggle.checked = pomodoroEnabled;
+            taskDurationToggle.checked = useTaskDurations;
+            pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
+            workDurationInput.value = workDurationMins;
+            shortBreakInput.value = shortBreakMins;
+            longBreakInput.value = longBreakMins;
+            showFocusScreen();
+        });
+        // Esc on the setup screen also cancels (only if already authenticated).
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && !setupScreen.classList.contains('hidden') && apiToken && !cancelSettingsBtn.classList.contains('hidden')) {
+                e.preventDefault();
+                cancelSettingsBtn.click();
+            }
+        });
+        
+        // Sound and Pomodoro toggles
+        soundToggle.addEventListener('change', () => { soundEnabled = soundToggle.checked; localStorage.setItem('sound_enabled', soundEnabled); });
+        pomodoroToggle.addEventListener('change', () => { pomodoroEnabled = pomodoroToggle.checked; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none'; updatePomodoroDots(); });
+        taskDurationToggle.addEventListener('change', () => { useTaskDurations = taskDurationToggle.checked; localStorage.setItem('use_task_durations', useTaskDurations); applyTaskDurationIfIdle(); });
+
+        // Keyboard shortcuts overlay
+        function openShortcuts() { shortcutsOverlay.classList.add('active'); }
+        function closeShortcuts() { shortcutsOverlay.classList.remove('active'); }
+        shortcutsBtn.addEventListener('click', openShortcuts);
+        closeShortcutsBtn.addEventListener('click', closeShortcuts);
+        closeShortcutsBtn.addEventListener('pointerup', closeShortcuts);
+        shortcutsOverlay.addEventListener('click', e => { if (e.target === shortcutsOverlay) closeShortcuts(); });
+        
+        // Break overlay buttons
+        startBreakBtn.addEventListener('click', () => { hideBreakOverlay(); startTimer(); });
+        skipBreakBtn.addEventListener('click', skipBreak);
+        compactBtn.addEventListener('click', toggleCompactMode);
+        compactExpand.addEventListener('click', toggleCompactMode);
+        compactPlayPause.addEventListener('click', togglePlayPause);
+        compactComplete.addEventListener('click', completeTask);
+        compactSkip.addEventListener('click', skipTaskFromSession);
+        compactPrev.addEventListener('click', goToPrevTask);
+        compactNext.addEventListener('click', goToNextTask);
+        compactTimer.addEventListener('click', () => { if (!timerRunning) { toggleCompactMode(); setTimeout(() => timerDisplay.click(), 100); } });
+        timerStartBtn.addEventListener('click', togglePlayPause);
+        timerResetBtn.addEventListener('click', resetTimer);
+        // Click on the ring (anywhere except the time text) toggles play/pause.
+        const timerRingWrap = document.querySelector('.timer-ring-wrap');
+        if (timerRingWrap) timerRingWrap.addEventListener('click', togglePlayPause);
+        timerDisplay.addEventListener('click', (e) => { e.stopPropagation(); if (inOvertime) { stopOvertime(); return; } if (timerRunning) return; timerMinutesInput.value = Math.floor(timerSeconds / 60); timerSecondsInput.value = (timerSeconds % 60).toString().padStart(2, '0'); timerEditOverlay.classList.add('active'); timerMinutesInput.focus(); timerMinutesInput.select(); });
+        completeBtn.addEventListener('click', completeTask);
+        dropBtn.addEventListener('click', skipTaskFromSession);
+        // Delegated handlers for controls inside taskArea (re-rendered each time).
+        taskArea.addEventListener('click', e => {
+            if (e.target.closest('#emptyAddBtn')) { reorderBtn.click(); return; }
+            // The mini-switch flips the goal in place; the rest of the chip edits it.
+            if (e.target.closest('#goalQuickToggle')) { e.stopPropagation(); toggleGoalForTask(currentIndex); return; }
+            if (e.target.closest('#goalChip')) openGoalModal(currentIndex);
+        });
+        taskArea.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            if (!e.target.closest('#goalChip')) return;
+            // Consume it — otherwise the document handler would also read Space
+            // as play/pause and Enter as "complete task".
+            e.preventDefault();
+            e.stopPropagation();
+            openGoalModal(currentIndex);
+        });
+
+        // Goal modal wiring
+        goalCancelBtn.addEventListener('click', closeGoalModal);
+        goalSaveBtn.addEventListener('click', saveGoalFromModal);
+        goalRemoveBtn.addEventListener('click', removeGoalFromModal);
+        goalOverlay.addEventListener('click', e => { if (e.target === goalOverlay) closeGoalModal(); });
+        goalEnabledToggle.addEventListener('change', syncGoalPresets);
+        goalMinutesInput.addEventListener('input', syncGoalPresets);
+        goalMinutesInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveGoalFromModal(); } });
+        goalPresets.addEventListener('click', e => {
+            const btn = e.target.closest('.goal-preset');
+            if (!btn) return;
+            goalMinutesInput.value = btn.dataset.mins;
+            syncGoalPresets();
+        });
+        timerEditCancel.addEventListener('click', () => timerEditOverlay.classList.remove('active'));
+        timerEditSave.addEventListener('click', () => { timerManuallySet = true; setTimer(parseInt(timerMinutesInput.value) || 0, parseInt(timerSecondsInput.value) || 0); timerEditOverlay.classList.remove('active'); });
+        timerEditOverlay.addEventListener('click', e => { if (e.target === timerEditOverlay) timerEditOverlay.classList.remove('active'); });
+        reorderBtn.addEventListener('click', () => {
+            taskSearchInput.value = '';
+            renderTaskList();
+            taskOrderOverlay.classList.add('active');
+            taskSearchInput.focus();
+            if (allTasks.length > 0) {
+                // Show cached results immediately, refresh in background
+                searchTasks('');
+                loadAllTasks().then(() => searchTasks(taskSearchInput.value));
+            } else {
+                searchResults.innerHTML = '<div class="search-loading">Loading tasks…</div>';
+                loadAllTasks().then(() => searchTasks(''));
+            }
+        });
+        // Done button — bind both click and pointerup. Native click can be
+        // suppressed by Electron/macOS when the body is a window-drag region;
+        // pointerup fires regardless. Removing 'active' twice is a no-op.
+        const closeManageTasks = () => {
+            taskOrderOverlay.classList.remove('active');
+            // Clamp in case tasks were removed while the modal was open — never
+            // discard a selection the user just made in the list.
+            const clamped = Math.min(Math.max(0, currentIndex), Math.max(0, tasks.length - 1));
+            if (clamped !== currentIndex) currentIndex = clamped;
+            persistSession();
+            renderCurrentTask();
+            updateCompactBar();
+        };
+        closeTaskOrder.addEventListener('click', closeManageTasks);
+        closeTaskOrder.addEventListener('pointerup', closeManageTasks);
+        taskSearchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => searchTasks(e.target.value), 300);
+        });
+        taskSearchInput.addEventListener('keydown', e => {
+            const items = Array.from(searchResults.querySelectorAll('.search-result-item:not(.in-session)'));
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedSearchIndex = Math.min(selectedSearchIndex + 1, items.length - 1);
+                items.forEach((el, i) => { el.classList.toggle('keyboard-selected', i === selectedSearchIndex); if (i === selectedSearchIndex) el.scrollIntoView({ block: 'nearest' }); });
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedSearchIndex = Math.max(selectedSearchIndex - 1, -1);
+                items.forEach((el, i) => { el.classList.toggle('keyboard-selected', i === selectedSearchIndex); if (i === selectedSearchIndex) el.scrollIntoView({ block: 'nearest' }); });
+            } else if (e.key === 'Enter' && selectedSearchIndex >= 0 && items[selectedSearchIndex]) {
+                e.preventDefault();
+                items[selectedSearchIndex].click();
+                selectedSearchIndex = -1;
+            }
+        });
+        // stopImmediatePropagation: this Esc is consumed by closing the modal —
+        // without it the later document keydown listener sees the overlay as
+        // already closed and would also skip an active break.
+        // The goal editor can be layered over Manage Tasks, so it claims Esc first.
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && goalOverlay.classList.contains('active')) { closeGoalModal(); e.stopImmediatePropagation(); } });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && taskOrderOverlay.classList.contains('active')) { closeManageTasks(); e.stopImmediatePropagation(); } });
+        taskOrderOverlay.addEventListener('click', e => { if (e.target === taskOrderOverlay) closeManageTasks(); });
+        skipBtn.addEventListener('click', goToNextTask);
+        prevBtn.addEventListener('click', goToPrevTask);
+        refreshBtn.addEventListener('click', refreshSession);
+        clearAllBtn.addEventListener('click', clearAllSessionTasks);
+        loadTodayBtn.addEventListener('click', addTodayTasksToSession);
+        loadPlannerBtn.addEventListener('click', addWeeklyPlannerTasksToSession);
+        filterSelect.addEventListener('change', () => { selectedFilter = filterSelect.value; localStorage.setItem('todoist_filter', selectedFilter); });
+        // Day-rollover prompt actions. 'Keep as is' confirms the session for
+        // today so it won't nag again this day, even across restarts.
+        $('rolloverDismissBtn').addEventListener('click', () => {
+            $('rolloverPrompt').classList.remove('visible');
+            sessionDay = localDateKey();
+            persistSession();
+        });
+        $('rolloverLoadBtn').addEventListener('click', async () => {
+            $('rolloverPrompt').classList.remove('visible');
+            const synced = await syncNow(); // false when the network fetch failed
+            if (!synced) {
+                // Offline / sync failure: leave sessionDay stale and re-arm the
+                // prompt so it can offer again once we're back online.
+                _rolloverPromptedFor = null;
+                showToast("Couldn't refresh — check connection");
+                return;
+            }
+            allTasks = Object.values(itemsById);
+            applyItemsToSession(); // prunes tasks completed/deleted elsewhere overnight
+            sessionDay = localDateKey();
+            await addTodayTasksToSession(); // appends today's & overdue, persists, re-renders
+            currentIndex = 0;
+            persistSession();
+            renderCurrentTask();
+            updateCompactBar();
+            showToast('Session refreshed for today');
+        });
+        window.addEventListener('focus', checkDayRollover);
+        apiTokenInput.addEventListener('keypress', e => { if (e.key === 'Enter') connectBtn.click(); });
+        document.addEventListener('keydown', e => {
+            // Esc closes the shortcuts overlay regardless of focus context
+            if (e.key === 'Escape' && shortcutsOverlay.classList.contains('active')) {
+                e.preventDefault(); closeShortcuts(); return;
+            }
+            // Break overlay owns the keyboard while visible — Enter must never
+            // fall through and complete the task hidden behind it. But defer to
+            // surfaces layered on top: if Manage Tasks or the timer editor is
+            // open, or the key was typed in a form field, skip the break
+            // shortcuts and let normal handling (e.g. Esc-close at the listener
+            // above) run.
+            if ($('breakOverlay').classList.contains('active')
+                && !taskOrderOverlay.classList.contains('active')
+                && !timerEditOverlay.classList.contains('active')
+                && !goalOverlay.classList.contains('active')
+                && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
+                if (e.key === 'Enter' || e.code === 'Space') { e.preventDefault(); startBreakBtn.click(); }
+                else if (e.key === 'Escape') { e.preventDefault(); skipBreakBtn.click(); }
+                return;
+            }
+            if (!focusScreen.classList.contains('active') || timerEditOverlay.classList.contains('active') || taskOrderOverlay.classList.contains('active') || shortcutsOverlay.classList.contains('active') || goalOverlay.classList.contains('active')) return;
+            if (e.key === '?' && e.target.tagName !== 'INPUT') { e.preventDefault(); openShortcuts(); return; }
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); togglePlayPause(); }
+            else if (e.code === 'Enter' && e.target.tagName !== 'INPUT') { e.preventDefault(); completeTask(); }
+            else if (e.code === 'ArrowRight' || e.code === 'KeyN') { e.preventDefault(); goToNextTask(); }
+            else if (e.code === 'ArrowLeft' || e.code === 'KeyP') { e.preventDefault(); goToPrevTask(); }
+            else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); refreshBtn.click(); }
+            else if (e.code === 'KeyM' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleCompactMode(); }
+            else if (e.code === 'KeyO' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id); }
+            else if (e.code === 'KeyE' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) openGoalModal(currentIndex); }
+            else if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) toggleGoalForTask(currentIndex); }
+        });
+        // Screen routing is handled inside init() after the token loads asynchronously.
+        init();
+    </script>
+</body>
+</html>
