@@ -565,6 +565,11 @@
         /* Compact mode resizes the native window — meaningless in a browser. */
         html.is-web #compactBtn { display: none; }
 
+        /* The toast and rollover pills are fixed to the viewport edge, which on
+           an installed PWA puts them under the home indicator. Lift them clear. */
+        html.is-web .toast-container,
+        html.is-web .rollover-prompt { bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+
         /* Touch phones: no hardware keyboard, so the shortcuts panel is noise. */
         @media (pointer: coarse) {
             html.is-web #shortcutsBtn { display: none; }
@@ -585,6 +590,16 @@
             html.is-web .timer-icon-btn.primary svg { width: 22px; height: 22px; }
             html.is-web .rollover-btn,
             html.is-web .session-action-btn { min-height: 40px; }
+            /* The rollover pill's single nowrap row is wider than a phone
+               screen and got clipped at both edges. Span the viewport instead:
+               message on the first line, buttons side by side on the second. */
+            html.is-web .rollover-prompt {
+                width: calc(100vw - 1.5rem);
+                white-space: normal; text-align: center;
+                flex-wrap: wrap; justify-content: center; row-gap: 0.5rem;
+                border-radius: 22px; padding: 0.7rem 1rem;
+            }
+            html.is-web .rollover-prompt span { flex-basis: 100%; }
             /* Modals become near-full-screen sheets rather than tiny centered cards. */
             html.is-web .shortcuts-modal,
             html.is-web .task-order-modal,
