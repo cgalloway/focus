@@ -2427,6 +2427,22 @@
             finally { loadPlannerBtn.disabled = false; }
         }
 
+        // Completing a task ends the timing session that belonged to it, so the
+        // timer re-arms to the NEXT task's length (goal, Todoist estimate, or
+        // the configured work length) instead of carrying the old remainder
+        // forward. If the countdown was running when the task was checked off,
+        // it restarts at the new length to keep the flow going — unless a
+        // banked Pomodoro break is about to claim the timer instead.
+        function rearmTimerAfterComplete(wasRunning, breakComing) {
+            if (isOnBreak) return; // the break owns the timer and re-arms it on exit
+            exitOvertime();
+            timerManuallySet = false;
+            const secs = taskWorkSeconds();
+            timerSeconds = secs; initialTimerSeconds = secs;
+            updateTimerDisplay();
+            if (wasRunning && !breakComing && tasks.length > 0) startTimer();
+        }
+
         // Overtime belongs to the task whose goal ran out, so leaving that task
         // ends it and re-arms the timer for whatever comes next.
         function leaveCurrentTaskTimer() {
@@ -2648,6 +2664,11 @@
             const outcome = goalOutcome(task);
             if (savedIndex === currentIndex) exitOvertime();
             flushElapsed();
+            // The countdown belonged to the task just checked off — freeze it
+            // now; it re-arms for the successor once the swap animation lands.
+            const wasRunning = timerRunning;
+            if (wasRunning) stopTimer();
+            const breakComing = pomodoroEnabled && _breakPendingTaskId === String(task.id);
 
             // Optimistic: animate out, remove from queue and item store immediately.
             if (block) block.classList.add('completing');
@@ -2660,7 +2681,7 @@
             persistSession();
 
             if (wasLastTask) fireConfetti();
-            setTimeout(() => { renderCurrentTask(); _completing = false; }, 280);
+            setTimeout(() => { renderCurrentTask(); rearmTimerAfterComplete(wasRunning, breakComing); _completing = false; }, 280);
 
             // Fire the network call in the background — re-insert on failure.
             try {

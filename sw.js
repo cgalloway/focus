@@ -13,7 +13,7 @@
  * deletes every older cache.
  * ------------------------------------------------------------------------- */
 
-const CACHE_VERSION = 'focus-v2';
+const CACHE_VERSION = 'focus-v3';
 const SHELL_CACHE = CACHE_VERSION + '-shell';
 const ASSET_CACHE = CACHE_VERSION + '-assets';
 
