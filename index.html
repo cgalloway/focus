@@ -1000,6 +1000,7 @@
                     localStorage.setItem('focus_session_at', String(_sessionAt));
                     scheduleSync();
                 }
+                persistTimeLeft(); // rides along so the remainder store stays pruned to the session
             } catch (e) { /* ignore quota/serialize errors */ }
         }
         function restoreSession() {
@@ -1191,6 +1192,31 @@
             if (_elapsedTaskId === id) { _elapsedTaskId = null; _elapsedStamp = null; }
             delete taskElapsed[id]; saveElapsed();
             delete taskGoals[id]; saveGoals();
+            delete taskTimeLeft[id]; persistTimeLeft();
+        }
+
+        // ---- Per-task countdown remainders (focus_time_left_v1) ----
+        // Each task in the session keeps its own clock: navigate away from one
+        // mid-countdown and its remaining time (plus the length that stretch
+        // started from) is parked here, keyed by task id; come back and the
+        // timer resumes from it. Local to this device only — cross-device sync
+        // already carries real elapsed time, and a half-run countdown is a UI
+        // convenience, not a fact worth merging.
+        let taskTimeLeft = {};
+        try {
+            const d = JSON.parse(localStorage.getItem('focus_time_left_v1') || '{}');
+            if (d && typeof d === 'object' && !Array.isArray(d)) taskTimeLeft = d;
+        } catch (e) { /* corrupt storage — start empty */ }
+        function persistTimeLeft() {
+            // Self-pruning: only tasks still in the session can resume, so
+            // completed, dropped and remotely-pruned tasks fall out on their own.
+            const live = {};
+            for (const t of tasks) {
+                const k = String(t.id);
+                if (taskTimeLeft[k]) live[k] = taskTimeLeft[k];
+            }
+            taskTimeLeft = live;
+            try { localStorage.setItem('focus_time_left_v1', JSON.stringify(live)); } catch (e) { /* quota */ }
         }
 
         // =====================================================================
@@ -1688,6 +1714,8 @@
                 showFocusScreen();
                 restoreSession();
                 renderCurrentTask();
+                // Relaunch resumes the focused task's parked countdown, if any.
+                armTimerForArrival(false, false);
                 updateCompactBar();
                 loadProjects().then(() => {
                     renderCurrentTask();
@@ -1864,7 +1892,16 @@
             timerInterval = setInterval(() => {
                 timerSeconds = Math.max(0, Math.round((timerEndTime - Date.now()) / 1000));
                 updateTimerDisplay();
-                if (timerSeconds <= 0) { stopTimer(); if (!isOnBreak) bumpStat('focusSeconds', initialTimerSeconds); timerManuallySet = false; playTimerSound(); showTimerNotification(); handleTimerComplete(); }
+                if (timerSeconds <= 0) {
+                    stopTimer();
+                    if (!isOnBreak) {
+                        bumpStat('focusSeconds', initialTimerSeconds);
+                        // This stretch ran out — a revisit starts fresh, not at 0:00.
+                        const ct = currentTask();
+                        if (ct) { delete taskTimeLeft[String(ct.id)]; persistTimeLeft(); }
+                    }
+                    timerManuallySet = false; playTimerSound(); showTimerNotification(); handleTimerComplete();
+                }
             }, 1000);
             updateTimerDisplay();
             // Book the lock-screen alert now, while we still have a foreground
@@ -2436,31 +2473,61 @@
             finally { loadPlannerBtn.disabled = false; }
         }
 
-        // Completing a task ends the timing session that belonged to it, so the
-        // timer re-arms to the NEXT task's length (goal, Todoist estimate, or
-        // the configured work length) instead of carrying the old remainder
-        // forward. If the countdown was running when the task was checked off,
-        // it restarts at the new length to keep the flow going — unless a
-        // banked Pomodoro break is about to claim the timer instead.
-        function rearmTimerAfterComplete(wasRunning, breakComing) {
+        // Leaving a task parks its countdown. Mid-countdown (paused or running)
+        // the remainder is saved so a return visit resumes it; an untouched or
+        // finished countdown saves nothing, so a return starts fresh. Overtime
+        // means the countdown is exhausted — a revisit starts fresh too.
+        function stashCurrentTaskTimer() {
+            const t = currentTask();
+            if (!t || isOnBreak) return;
+            const id = String(t.id);
+            if (inOvertime) { delete taskTimeLeft[id]; persistTimeLeft(); return; }
+            if (timerSeconds > 0 && timerSeconds < initialTimerSeconds) {
+                taskTimeLeft[id] = { left: timerSeconds, initial: initialTimerSeconds };
+            } else {
+                delete taskTimeLeft[id];
+            }
+            persistTimeLeft();
+        }
+
+        // Arriving at a task arms the timer with its parked remainder, or its
+        // full length (goal, Todoist estimate, or the configured work length)
+        // when there's nothing to resume. If the countdown was running when we
+        // left the previous task, it keeps running here — unless a banked
+        // Pomodoro break is about to claim the timer instead.
+        function armTimerForArrival(wasRunning, breakComing) {
             if (isOnBreak) return; // the break owns the timer and re-arms it on exit
             exitOvertime();
             timerManuallySet = false;
-            const secs = taskWorkSeconds();
-            timerSeconds = secs; initialTimerSeconds = secs;
+            const t = currentTask();
+            const saved = t && taskTimeLeft[String(t.id)];
+            if (saved && saved.left > 0) {
+                timerSeconds = Math.round(saved.left);
+                initialTimerSeconds = Math.max(Math.round(saved.initial || 0), timerSeconds);
+            } else {
+                const secs = taskWorkSeconds();
+                timerSeconds = secs; initialTimerSeconds = secs;
+            }
             updateTimerDisplay();
             if (wasRunning && !breakComing && tasks.length > 0) startTimer();
         }
 
-        // Overtime belongs to the task whose goal ran out, so leaving that task
-        // ends it and re-arms the timer for whatever comes next.
-        function leaveCurrentTaskTimer() {
-            if (!inOvertime) return;
-            exitOvertime();
-            timerSeconds = initialTimerSeconds;
+        // Every deliberate change of focused task funnels through here so each
+        // task keeps its own clock. During a break the break countdown is left
+        // alone — only the task behind it changes.
+        function switchFocusedTask(newIndex) {
+            if (newIndex === currentIndex || newIndex < 0 || newIndex >= tasks.length) return;
+            const wasRunning = !isOnBreak && timerRunning;
+            if (wasRunning) pauseTimer();
+            stashCurrentTaskTimer();
+            if (!isOnBreak) exitOvertime();
+            currentIndex = newIndex;
+            persistSession();
+            renderCurrentTask();
+            armTimerForArrival(wasRunning, false);
         }
-        function goToNextTask() { if (tasks.length > 1) { leaveCurrentTaskTimer(); currentIndex = (currentIndex + 1) % tasks.length; persistSession(); renderCurrentTask(); } }
-        function goToPrevTask() { if (tasks.length > 1) { leaveCurrentTaskTimer(); currentIndex = (currentIndex - 1 + tasks.length) % tasks.length; persistSession(); renderCurrentTask(); } }
+        function goToNextTask() { if (tasks.length > 1) switchFocusedTask((currentIndex + 1) % tasks.length); }
+        function goToPrevTask() { if (tasks.length > 1) switchFocusedTask((currentIndex - 1 + tasks.length) % tasks.length); }
 
         function renderCurrentTask() {
             const ctxBar = $('taskContextBar');
@@ -2690,7 +2757,7 @@
             persistSession();
 
             if (wasLastTask) fireConfetti();
-            setTimeout(() => { renderCurrentTask(); rearmTimerAfterComplete(wasRunning, breakComing); _completing = false; }, 280);
+            setTimeout(() => { renderCurrentTask(); armTimerForArrival(wasRunning, breakComing); _completing = false; }, 280);
 
             // Fire the network call in the background — re-insert on failure.
             try {
@@ -2783,7 +2850,16 @@
 
         function removeTaskFromSession(index) {
             if (tasks.length === 0 || index < 0 || index >= tasks.length) return;
-            if (index === currentIndex) leaveCurrentTaskTimer();
+            const removingFocused = index === currentIndex;
+            let wasRunning = false;
+            if (removingFocused) {
+                // The dropped task takes its countdown with it; whatever task
+                // slides into focus gets its own clock, like any other switch.
+                wasRunning = !isOnBreak && timerRunning;
+                if (wasRunning) pauseTimer();
+                if (!isOnBreak) exitOvertime();
+                delete taskTimeLeft[String(tasks[index].id)];
+            }
             // Dropped without being finished — the owed break goes with it.
             if (_breakPendingTaskId === String(tasks[index].id)) _breakPendingTaskId = null;
             tasks.splice(index, 1);
@@ -2792,6 +2868,7 @@
             if (tasks.length === 0) currentIndex = 0;
             persistSession();
             renderCurrentTask();
+            if (removingFocused) armTimerForArrival(wasRunning, false);
             updateCompactBar();
             if (taskOrderOverlay.classList.contains('active')) renderTaskList();
         }
@@ -3017,9 +3094,7 @@
             if (e.target.closest(ROW_BTN_SEL)) return;
             const idx = parseInt(item.dataset.index);
             if (e.target.closest('.task-item-content')) {
-                currentIndex = idx;
-                persistSession();
-                renderCurrentTask();
+                switchFocusedTask(idx);
                 renderTaskList();
             }
         });
