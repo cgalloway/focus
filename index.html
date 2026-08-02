@@ -492,6 +492,15 @@
         @media (pointer: coarse) {
             .task-done-btn { width: 26px; height: 26px; }
             .task-done-btn svg { stroke: var(--text-secondary); }
+            /* No hover on touch: the reorder handle must always be visible and
+               big enough to grab. touch-action:none keeps a drag that starts on
+               it from scrolling the list instead; the padding/margin pair grows
+               the touch target without moving anything in the row. */
+            .drag-handle {
+                opacity: 1; padding: 12px 8px; margin: -12px -8px;
+                touch-action: none; -webkit-touch-callout: none;
+                -webkit-user-select: none; user-select: none;
+            }
         }
         .close-modal-btn { width: 100%; padding: 0.875rem; border: none; background: var(--accent); color: white; border-radius: 8px; font-size: 0.95rem; font-family: inherit; cursor: pointer; }
         .close-modal-btn:hover { background: var(--accent-hover); }
@@ -2795,6 +2804,14 @@
         const DONE_BTN_HTML = '<button class="task-done-btn" title="Complete task (syncs to Todoist)"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg></button>';
         let draggedIndex = null;
 
+        // iPhone/iPad: HTML5 drag-and-drop rides the native long-press "lift"
+        // that iOS reserves for cross-app dragging, and it fights the scroll
+        // gesture — it never became reliable for in-page reordering. So on
+        // coarse-pointer devices the rows aren't draggable at all; the drag
+        // handle drives a Pointer Events reorder instead, sharing the same
+        // targeting and drop logic as the desktop path.
+        const TOUCH_DRAG = matchMedia('(pointer: coarse)').matches;
+
         function clearDragIndicators() {
             taskList.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(x => x.classList.remove('drag-over-top', 'drag-over-bottom'));
         }
@@ -2815,6 +2832,38 @@
             }
             const last = items[items.length - 1];
             return { targetIdx: parseInt(last.dataset.index), insertBefore: false, el: last };
+        }
+
+        // Show the insertion line for a drag hovering at clientY.
+        function updateDropIndicator(clientY) {
+            clearDragIndicators();
+            const target = computeDropTarget(clientY);
+            if (target && target.targetIdx !== draggedIndex) {
+                target.el.classList.add(target.insertBefore ? 'drag-over-top' : 'drag-over-bottom');
+            }
+        }
+
+        // Reorder the session around a drop at clientY. Shared by the HTML5
+        // drop handler and the touch drag's pointerup.
+        function commitDrop(clientY) {
+            const target = computeDropTarget(clientY);
+            clearDragIndicators();
+            if (!target || target.targetIdx === draggedIndex) return;
+
+            let dropIdx = target.targetIdx;
+            if (draggedIndex < dropIdx) dropIdx--;
+            if (!target.insertBefore) dropIdx++;
+
+            const [t] = tasks.splice(draggedIndex, 1);
+            tasks.splice(dropIdx, 0, t);
+
+            if (currentIndex === draggedIndex) currentIndex = dropIdx;
+            else if (draggedIndex < currentIndex && dropIdx >= currentIndex) currentIndex--;
+            else if (draggedIndex > currentIndex && dropIdx <= currentIndex) currentIndex++;
+
+            persistSession();
+            renderTaskList();
+            renderCurrentTask();
         }
 
         function renderTaskList() {
@@ -2839,7 +2888,7 @@
                     ? (g.enabled ? `Challenge timer on — ${g.minutes} min goal` : `${g.minutes} min goal (switched off)`)
                     : 'Set a time goal';
                 const goalBtn = `<button class="task-goal-btn${goalCls}" title="${escHtml(goalTitle)}">${CLOCK_SVG}${g ? `<span>${g.minutes}</span>` : ''}</button>`;
-                return `<div class="task-item${i === currentIndex ? ' current' : ''}" draggable="true" data-index="${i}">${DONE_BTN_HTML}${DRAG_HANDLE_HTML}<span class="task-item-content">${escHtml(task.content)}</span>${labelsHtml}<span class="task-item-project">${projectName}</span>${goalBtn}${REMOVE_BTN_HTML}</div>`;
+                return `<div class="task-item${i === currentIndex ? ' current' : ''}" draggable="${TOUCH_DRAG ? 'false' : 'true'}" data-index="${i}">${DONE_BTN_HTML}${DRAG_HANDLE_HTML}<span class="task-item-content">${escHtml(task.content)}</span>${labelsHtml}<span class="task-item-project">${projectName}</span>${goalBtn}${REMOVE_BTN_HTML}</div>`;
             }).join('');
         }
 
@@ -2862,7 +2911,7 @@
                 const item = _xPointerDown.closest('.task-item');
                 if (item) {
                     item.draggable = false;
-                    const restore = () => { item.draggable = true; document.removeEventListener('mouseup', restore); };
+                    const restore = () => { item.draggable = !TOUCH_DRAG; document.removeEventListener('mouseup', restore); };
                     document.addEventListener('mouseup', restore);
                 }
             }
@@ -2899,11 +2948,7 @@
             if (draggedIndex === null) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
-            clearDragIndicators();
-            const target = computeDropTarget(e.clientY);
-            if (target && target.targetIdx !== draggedIndex) {
-                target.el.classList.add(target.insertBefore ? 'drag-over-top' : 'drag-over-bottom');
-            }
+            updateDropIndicator(e.clientY);
             // Auto-scroll near top/bottom edges
             const listRect = taskList.getBoundingClientRect();
             if (e.clientY < listRect.top + 40) taskList.scrollTop -= 8;
@@ -2915,25 +2960,56 @@
         taskList.addEventListener('drop', e => {
             if (draggedIndex === null) return;
             e.preventDefault();
-            const target = computeDropTarget(e.clientY);
-            clearDragIndicators();
-            if (!target || target.targetIdx === draggedIndex) return;
-
-            let dropIdx = target.targetIdx;
-            if (draggedIndex < dropIdx) dropIdx--;
-            if (!target.insertBefore) dropIdx++;
-
-            const [t] = tasks.splice(draggedIndex, 1);
-            tasks.splice(dropIdx, 0, t);
-
-            if (currentIndex === draggedIndex) currentIndex = dropIdx;
-            else if (draggedIndex < currentIndex && dropIdx >= currentIndex) currentIndex--;
-            else if (draggedIndex > currentIndex && dropIdx <= currentIndex) currentIndex++;
-
-            persistSession();
-            renderTaskList();
-            renderCurrentTask();
+            commitDrop(e.clientY);
         });
+
+        // ---- Touch reorder (coarse pointers) ----
+        // A finger on the handle starts the drag immediately; anywhere else on
+        // the row still scrolls the list (the handle is touch-action:none).
+        // Pointer capture keeps move/up events flowing even when the finger
+        // wanders outside the list mid-drag.
+        let _touchDrag = null;
+        taskList.addEventListener('pointerdown', e => {
+            if (!TOUCH_DRAG || _touchDrag) return;
+            const handle = e.target.closest('.drag-handle');
+            const item = handle && handle.closest('.task-item');
+            if (!item) return;
+            e.preventDefault();
+            draggedIndex = parseInt(item.dataset.index);
+            item.classList.add('dragging');
+            try { handle.setPointerCapture(e.pointerId); } catch (err) { /* uncaptured still mostly works */ }
+            _touchDrag = {
+                pointerId: e.pointerId,
+                lastY: e.clientY,
+                scrollDir: 0,
+                // pointermove stops firing while the finger holds still, so
+                // edge auto-scroll has to run on its own clock.
+                scrollTimer: setInterval(() => {
+                    if (!_touchDrag || !_touchDrag.scrollDir) return;
+                    taskList.scrollTop += _touchDrag.scrollDir * 6;
+                    updateDropIndicator(_touchDrag.lastY);
+                }, 16)
+            };
+        });
+        taskList.addEventListener('pointermove', e => {
+            if (!_touchDrag || e.pointerId !== _touchDrag.pointerId) return;
+            _touchDrag.lastY = e.clientY;
+            updateDropIndicator(e.clientY);
+            const r = taskList.getBoundingClientRect();
+            _touchDrag.scrollDir = e.clientY < r.top + 44 ? -1 : e.clientY > r.bottom - 44 ? 1 : 0;
+        });
+        function endTouchDrag(e, commit) {
+            if (!_touchDrag || e.pointerId !== _touchDrag.pointerId) return;
+            clearInterval(_touchDrag.scrollTimer);
+            _touchDrag = null;
+            const dragged = taskList.querySelector('.task-item.dragging');
+            if (dragged) dragged.classList.remove('dragging');
+            if (commit) commitDrop(e.clientY);
+            else clearDragIndicators();
+            draggedIndex = null;
+        }
+        taskList.addEventListener('pointerup', e => endTouchDrag(e, true));
+        taskList.addEventListener('pointercancel', e => endTouchDrag(e, false));
         taskList.addEventListener('click', e => {
             const item = e.target.closest('.task-item');
             if (!item) return;
