@@ -70,7 +70,9 @@
             display: none; align-items: center; justify-content: space-between;
             height: 100%; width: 100%; gap: 0.75%; padding: 0 2.5%;
             -webkit-app-region: drag;
-            font-size: min(17px, calc(8px + 1.5vw));
+            /* Scales with the bar's own window: resize the pill and the text
+               follows, capped by height so it can never overflow a short bar. */
+            font-size: min(28vh, calc(8px + 1.5vw));
             background: var(--island-bg); border: 1px solid var(--island-border);
             /* Max extent (offset + blur) must stay within the 8px body padding. */
             border-radius: 999px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
@@ -165,6 +167,7 @@
         .cancel-btn:hover { background: var(--bg); color: var(--text); }
         .cancel-btn.hidden { display: none; }
         .help-text { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
+        .app-version { margin-top: 1.25rem; text-align: center; font-size: 0.75rem; color: var(--text-secondary); opacity: 0.8; }
         .help-text a { color: var(--accent); text-decoration: none; }
         .focus-screen { display: none; text-align: center; }
         .focus-screen.active { display: block; }
@@ -748,6 +751,10 @@
                     <br><br>
                     <a href="https://todoist.com/app/settings/integrations/developer" target="_blank">Open Todoist Settings →</a>
                 </div>
+                <!-- Bumped with every release, in lockstep with sw.js's
+                     CACHE_VERSION, so this always names the build actually
+                     running on this device. -->
+                <div class="app-version">Version 7 · updated August 3, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">

@@ -28,7 +28,21 @@ const COMPACT = { width: 380, height: 64 };
 
 let win = null;
 let overlayWin = null;
-let normalBounds = null; // saved when entering compact mode
+let normalBounds = null;  // saved when entering compact mode
+let isCompactMode = false;
+let compactBounds = null; // the user's chosen size for the minimal bar
+
+// The compact bar's size/position survives relaunches.
+const statePath = () => path.join(app.getPath('userData'), 'window-state.json');
+function loadWindowState() {
+  try {
+    const s = JSON.parse(fs.readFileSync(statePath(), 'utf8'));
+    if (s && s.compactBounds) compactBounds = s.compactBounds;
+  } catch (e) { /* first run */ }
+}
+function saveWindowState() {
+  try { fs.writeFileSync(statePath(), JSON.stringify({ compactBounds })); } catch (e) {}
+}
 
 // ---- Token storage (safeStorage-encrypted file in userData) ----------------
 
@@ -94,6 +108,17 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Remember whatever size the user drags the minimal bar to.
+  let saveTimer = null;
+  const rememberCompactBounds = () => {
+    if (!isCompactMode || !win) return;
+    compactBounds = win.getBounds();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveWindowState, 400);
+  };
+  win.on('resize', rememberCompactBounds);
+  win.on('move', rememberCompactBounds);
+
   win.on('closed', () => { win = null; });
 }
 
@@ -108,19 +133,23 @@ ipcMain.handle('focus:open-external', (e, url) => {
 
 ipcMain.handle('focus:toggle-compact', (e, isCompact) => {
   if (!win) return;
+  isCompactMode = !!isCompact;
   if (isCompact) {
     normalBounds = win.getBounds();
-    win.setMinimumSize(300, 56);
+    win.setMinimumSize(260, 44);
     // Vibrancy fills the whole window rect; the compact pill draws its own
     // island inside transparent padding, so drop vibrancy while compact.
     win.setVibrancy(null);
     win.setAlwaysOnTop(true, 'floating');
-    win.setBounds({ ...win.getBounds(), width: COMPACT.width, height: COMPACT.height }, true);
-    win.setResizable(false);
+    // No traffic lights on the pill — they overlapped the timer digits.
+    if (typeof win.setWindowButtonVisibility === 'function') win.setWindowButtonVisibility(false);
+    // Stays resizable: drag any edge to make the bar the size you like; the
+    // chosen size is remembered here and across relaunches.
+    win.setBounds(compactBounds || { ...win.getBounds(), width: COMPACT.width, height: COMPACT.height }, true);
   } else {
-    win.setResizable(true);
     win.setAlwaysOnTop(false);
     win.setVibrancy('under-window');
+    if (typeof win.setWindowButtonVisibility === 'function') win.setWindowButtonVisibility(true);
     win.setMinimumSize(NORMAL.minWidth, NORMAL.minHeight);
     win.setBounds(normalBounds || { width: NORMAL.width, height: NORMAL.height }, true);
   }
@@ -158,6 +187,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    loadWindowState();
     // Standard Edit/Window menus so copy, paste and Cmd+W behave natively.
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       { role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }
