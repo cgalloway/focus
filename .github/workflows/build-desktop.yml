@@ -1,0 +1,58 @@
+# Builds the macOS desktop app on GitHub's mac runners and publishes the DMG
+# to a fixed "desktop-latest" release, so installing Focus is just: download,
+# open, drag to Applications. Re-runs whenever the desktop shell changes; app
+# features don't need a rebuild at all (the shell loads the deployed site).
+name: Build desktop DMG
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/build-desktop.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm install
+
+      - name: Build DMG (universal — Apple Silicon + Intel)
+        working-directory: desktop
+        env:
+          # No signing certificate on CI; electron-builder ad-hoc signs instead.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist -- --universal
+
+      - name: List artifacts
+        run: ls -la desktop/dist/
+
+      - name: Publish to the desktop-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: Focus for Mac (latest)
+          body: |
+            Auto-built macOS app (unsigned, universal — works on Apple Silicon and Intel).
+
+            **Install:** download the `.dmg`, open it, drag **Focus** to **Applications**.
+
+            **First launch only:** macOS will warn about an unverified developer.
+            Right-click Focus.app → **Open** → **Open**. (On newer macOS: System
+            Settings → Privacy & Security → **Open Anyway**.)
+
+            The app loads the deployed Focus web app on launch, so it keeps
+            itself up to date — you should never need to download this again.
+          files: desktop/dist/*.dmg
