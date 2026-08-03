@@ -1268,13 +1268,27 @@
                 // the next Todoist sync will fill in anything real.
                 const rebuilt = rs.taskIds.map(id => itemsById[String(id)]).filter(Boolean);
                 if (rebuilt.length || rs.taskIds.length === 0) {
+                    // If the winning session moves focus to a different task,
+                    // treat it like a local switch: park the departing task's
+                    // countdown and arm the arriving one's own clock.
+                    const newIndex = Math.min(Math.max(0, rs.currentIndex | 0), Math.max(0, rebuilt.length - 1));
+                    const prevId = tasks[currentIndex] ? String(tasks[currentIndex].id) : null;
+                    const nextId = rebuilt[newIndex] ? String(rebuilt[newIndex].id) : null;
+                    const focusChanged = prevId !== nextId;
+                    let wasRunning = false;
+                    if (focusChanged) {
+                        wasRunning = !isOnBreak && timerRunning;
+                        if (wasRunning) pauseTimer();
+                        stashCurrentTaskTimer();
+                    }
                     tasks = rebuilt;
-                    currentIndex = Math.min(Math.max(0, rs.currentIndex | 0), Math.max(0, tasks.length - 1));
+                    currentIndex = newIndex;
                     sessionDay = typeof rs.day === 'string' ? rs.day : sessionDay;
                     _sessionAt = rs.at;
                     _sessionSig = sessionSignature();
                     localStorage.setItem('focus_session_at', String(_sessionAt));
                     localStorage.setItem('focus_session', JSON.stringify({ tasks, currentIndex, day: sessionDay }));
+                    if (focusChanged) armTimerForArrival(wasRunning, false);
                     sessionChanged = true;
                 }
             }
@@ -1763,6 +1777,9 @@
         document.addEventListener('visibilitychange', () => {
             if (!_syncReady) return;
             if (document.visibilityState === 'hidden') {
+                // Park the focused task's countdown so a relaunch resumes it
+                // even when iOS kills the app before any task switch happens.
+                stashCurrentTaskTimer();
                 FocusSync.flush();
             } else {
                 // Recompute the countdown immediately rather than waiting up to a
@@ -1781,7 +1798,7 @@
         });
         // pagehide is the only reliably-delivered "app is going away" event in
         // iOS Safari; visibilitychange alone can be skipped when the tab is killed.
-        window.addEventListener('pagehide', () => { if (_syncReady) FocusSync.flush(); });
+        window.addEventListener('pagehide', () => { stashCurrentTaskTimer(); if (_syncReady) FocusSync.flush(); });
 
         function toggleCompactMode() {
             isCompact = !isCompact;
@@ -1789,6 +1806,10 @@
             if (focusBridge) focusBridge.toggleCompact(isCompact);
             updateCompactBar();
         }
+
+        // Orange when a quarter of this countdown remains (10:00 → at 2:30),
+        // scaling with the timer's length; red stays a fixed last-minute alarm.
+        function warnThresholdSecs() { return Math.round(initialTimerSeconds * 0.25); }
 
         function updateCompactBar() {
             const shown = inOvertime ? overtimeSeconds : timerSeconds;
@@ -1802,7 +1823,7 @@
             else if (isOnBreak) compactTimer.classList.add('break-mode');
             else if (timerSeconds === 0) compactTimer.classList.add('finished');
             else if (timerSeconds <= 60) compactTimer.classList.add('danger');
-            else if (timerSeconds <= 300) compactTimer.classList.add('warning');
+            else if (timerSeconds <= warnThresholdSecs()) compactTimer.classList.add('warning');
 
             compactPlayPause.classList.toggle('active', timerRunning || inOvertime);
             const playIcon = $('compactPlayIcon');
@@ -1836,7 +1857,7 @@
             else if (isOnBreak) timerDisplay.classList.add('break-mode');
             else if (timerSeconds === 0) timerDisplay.classList.add('finished');
             else if (timerSeconds <= 60) timerDisplay.classList.add('danger');
-            else if (timerSeconds <= 300) timerDisplay.classList.add('warning');
+            else if (timerSeconds <= warnThresholdSecs()) timerDisplay.classList.add('warning');
             timerDisplay.classList.toggle('paused', !inOvertime && !timerRunning && timerSeconds > 0 && timerSeconds < initialTimerSeconds);
             updateProgressRing();
             updatePomodoroDots();
@@ -1856,7 +1877,7 @@
                 if (inOvertime) el.classList.add('danger');
                 else if (isOnBreak) el.classList.add('break-mode');
                 else if (timerSeconds <= 60 && timerSeconds > 0) el.classList.add('danger');
-                else if (timerSeconds <= 300 && timerSeconds > 0) el.classList.add('warning');
+                else if (timerSeconds <= warnThresholdSecs() && timerSeconds > 0) el.classList.add('warning');
             };
             setRing(timerRingProgress, RING_CIRCUMFERENCE);
             setRing(compactRingProgress, COMPACT_RING_CIRCUMFERENCE);
@@ -2321,7 +2342,16 @@
             tasks = refreshed;
             const idx = currentTaskId ? tasks.findIndex(t => String(t.id) === currentTaskId) : -1;
             if (idx >= 0) currentIndex = idx;
-            else if (currentIndex >= tasks.length) currentIndex = Math.max(0, tasks.length - 1);
+            else {
+                if (currentIndex >= tasks.length) currentIndex = Math.max(0, tasks.length - 1);
+                // The focused task was completed or deleted on another device.
+                // Whatever slides into focus gets its own clock, exactly like a
+                // deliberate switch — without this the departed task's countdown
+                // kept ticking against the new task.
+                const wasRunning = !isOnBreak && timerRunning;
+                if (wasRunning) pauseTimer();
+                armTimerForArrival(wasRunning, false);
+            }
         }
 
         // Refresh metadata for tasks already in the session and prune any
