@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- Click-through confetti overlay, spawned by main.js when the last task is
+     completed. Mirrors the colors and shape of the in-page web confetti in
+     index.html so both builds celebrate identically. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="app/confetti.browser.min.js"></script>
+<script>
+  const canvas = document.getElementById('c');
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const shoot = confetti.create(canvas, { resize: true, useWorker: false });
+  const colors = ['#001f3f', '#C5B358', '#ffffff'];
+  const end = Date.now() + 2400;
+  (function frame() {
+    shoot({ particleCount: 4, angle: 60, spread: 55, origin: { x: 0, y: 0.6 }, colors, scalar: 1.2, gravity: 0.9 });
+    shoot({ particleCount: 4, angle: 120, spread: 55, origin: { x: 1, y: 0.6 }, colors, scalar: 1.2, gravity: 0.9 });
+    if (Date.now() < end) requestAnimationFrame(frame);
+  }());
+  shoot({ particleCount: 140, spread: 110, origin: { y: 0.6 }, colors, scalar: 1.5, gravity: 0.8 });
+</script>
+</body>
+</html>

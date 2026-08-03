@@ -1,0 +1,38 @@
+{
+  "name": "focus-desktop",
+  "productName": "Focus",
+  "version": "2.0.0",
+  "description": "Focus — Todoist focus timer (macOS desktop shell)",
+  "author": "Carl Galloway",
+  "main": "main.js",
+  "scripts": {
+    "prestart": "node copy-app.js",
+    "start": "electron .",
+    "predist": "node copy-app.js",
+    "dist": "electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.carlgalloway.focus",
+    "productName": "Focus",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "overlay.html",
+      "app/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "../icon-512.png",
+      "target": [
+        "dmg"
+      ]
+    }
+  }
+}
