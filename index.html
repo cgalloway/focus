@@ -703,6 +703,11 @@
                         <input type="checkbox" id="taskDurationToggle">
                         <span class="toggle-slider"></span>
                     </label>
+                    <label class="toggle-row" title="When on, completing a task immediately starts the countdown for the task that takes its place">
+                        <span>Auto-start next task</span>
+                        <input type="checkbox" id="autoStartToggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
                     <div class="pomodoro-settings" id="pomodoroSettings" style="display:none;">
                         <div class="pomodoro-duration-row">
                             <label for="workDuration">Work session</label>
@@ -754,7 +759,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 8 · updated August 4, 2026</div>
+                <div class="app-version">Version 9 · updated August 4, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -1260,7 +1265,7 @@
                 settings: {
                     at: _settingsAt,
                     data: {
-                        pomodoroEnabled, soundEnabled, useTaskDurations,
+                        pomodoroEnabled, soundEnabled, useTaskDurations, autoStartNext,
                         workDurationMins, shortBreakMins, longBreakMins, selectedFilter
                     }
                 }
@@ -1382,6 +1387,7 @@
             if (typeof s.pomodoroEnabled === 'boolean') { pomodoroEnabled = s.pomodoroEnabled; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); }
             if (typeof s.soundEnabled === 'boolean') { soundEnabled = s.soundEnabled; localStorage.setItem('sound_enabled', soundEnabled); }
             if (typeof s.useTaskDurations === 'boolean') { useTaskDurations = s.useTaskDurations; localStorage.setItem('use_task_durations', useTaskDurations); }
+            if (typeof s.autoStartNext === 'boolean') { autoStartNext = s.autoStartNext; localStorage.setItem('auto_start_next', autoStartNext); }
             if (Number.isFinite(s.workDurationMins)) { workDurationMins = s.workDurationMins; localStorage.setItem('pomodoro_work', workDurationMins); }
             if (Number.isFinite(s.shortBreakMins)) { shortBreakMins = s.shortBreakMins; localStorage.setItem('pomodoro_short', shortBreakMins); }
             if (Number.isFinite(s.longBreakMins)) { longBreakMins = s.longBreakMins; localStorage.setItem('pomodoro_long', longBreakMins); }
@@ -1390,6 +1396,7 @@
             if (soundToggle) soundToggle.checked = soundEnabled;
             if (pomodoroToggle) pomodoroToggle.checked = pomodoroEnabled;
             if (taskDurationToggle) taskDurationToggle.checked = useTaskDurations;
+            if (autoStartToggle) autoStartToggle.checked = autoStartNext;
             if (workDurationInput) workDurationInput.value = workDurationMins;
             if (shortBreakInput) shortBreakInput.value = shortBreakMins;
             if (longBreakInput) longBreakInput.value = longBreakMins;
@@ -1570,6 +1577,7 @@
         let pomodoroEnabled = localStorage.getItem('pomodoro_enabled') === 'true';
         let soundEnabled = localStorage.getItem('sound_enabled') !== 'false';
         let useTaskDurations = localStorage.getItem('use_task_durations') === 'true'; // off by default: fixed work-length timer
+        let autoStartNext = localStorage.getItem('auto_start_next') !== 'false';      // ON by default: completing a task starts the successor's countdown
         let pomodoroCount = 0, isOnBreak = false;
         let workDurationMins = parseInt(localStorage.getItem('pomodoro_work') || '25');
         let shortBreakMins = parseInt(localStorage.getItem('pomodoro_short') || '5');
@@ -1716,6 +1724,7 @@
         const compactPrev = $('compactPrev'), compactNext = $('compactNext');
         const soundToggle = $('soundToggle'), pomodoroToggle = $('pomodoroToggle'), pomodoroSettings = $('pomodoroSettings');
         const taskDurationToggle = $('taskDurationToggle');
+        const autoStartToggle = $('autoStartToggle');
         const workDurationInput = $('workDuration'), shortBreakInput = $('shortBreakDuration'), longBreakInput = $('longBreakDuration');
         const startBreakBtn = $('startBreakBtn'), skipBreakBtn = $('skipBreakBtn');
 
@@ -1773,6 +1782,7 @@
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
             taskDurationToggle.checked = useTaskDurations;
+            autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
             workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
@@ -2863,7 +2873,16 @@
             persistSession();
 
             if (wasLastTask) fireConfetti();
-            setTimeout(() => { renderCurrentTask(); armTimerForArrival(wasRunning, breakComing); _completing = false; }, 280);
+            // Completion hands the countdown to the successor. With auto-start
+            // on, it begins ticking even if the old timer was paused or idle —
+            // unless the optimistic close already rolled back (offline), where
+            // starting a timer on the task you failed to complete would be odd.
+            let rolledBack = false;
+            setTimeout(() => {
+                renderCurrentTask();
+                armTimerForArrival((wasRunning || autoStartNext) && !rolledBack, breakComing);
+                _completing = false;
+            }, 280);
 
             // Fire the network call in the background — re-insert on failure.
             try {
@@ -2891,6 +2910,7 @@
                 }
             } catch (e) {
                 // Restore task at its original position (clamped to current length).
+                rolledBack = true;
                 const restoreAt = Math.min(savedIndex, tasks.length);
                 tasks.splice(restoreAt, 0, task);
                 currentIndex = restoreAt;
@@ -2899,6 +2919,10 @@
                 persistSession();
                 _completing = false;
                 renderCurrentTask();
+                // A countdown that already started for the successor belongs to
+                // no one now — freeze it and re-arm for the restored task.
+                if (timerRunning) stopTimer();
+                armTimerForArrival(false, false);
                 showToast("Couldn't complete — task restored");
             }
         }
@@ -3365,6 +3389,7 @@
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
             taskDurationToggle.checked = useTaskDurations;
+            autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
             workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
@@ -3382,6 +3407,7 @@
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
             taskDurationToggle.checked = useTaskDurations;
+            autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
             workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
@@ -3396,10 +3422,18 @@
             }
         });
         
-        // Sound and Pomodoro toggles
-        soundToggle.addEventListener('change', () => { soundEnabled = soundToggle.checked; localStorage.setItem('sound_enabled', soundEnabled); });
-        pomodoroToggle.addEventListener('change', () => { pomodoroEnabled = pomodoroToggle.checked; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none'; updatePomodoroDots(); });
-        taskDurationToggle.addEventListener('change', () => { useTaskDurations = taskDurationToggle.checked; localStorage.setItem('use_task_durations', useTaskDurations); applyTaskDurationIfIdle(); });
+        // Settings toggles. Each one stamps the settings sync clock — without
+        // the stamp a flipped toggle stayed local-only until the next full
+        // "Connect & Start Focusing" save, so the other device never heard.
+        function stampSettings() {
+            _settingsAt = Date.now();
+            localStorage.setItem('focus_settings_at', String(_settingsAt));
+            scheduleSync(true);
+        }
+        soundToggle.addEventListener('change', () => { soundEnabled = soundToggle.checked; localStorage.setItem('sound_enabled', soundEnabled); stampSettings(); });
+        pomodoroToggle.addEventListener('change', () => { pomodoroEnabled = pomodoroToggle.checked; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none'; updatePomodoroDots(); stampSettings(); });
+        taskDurationToggle.addEventListener('change', () => { useTaskDurations = taskDurationToggle.checked; localStorage.setItem('use_task_durations', useTaskDurations); applyTaskDurationIfIdle(); stampSettings(); });
+        autoStartToggle.addEventListener('change', () => { autoStartNext = autoStartToggle.checked; localStorage.setItem('auto_start_next', autoStartNext); stampSettings(); });
 
         // Keyboard shortcuts overlay
         function openShortcuts() { shortcutsOverlay.classList.add('active'); }
