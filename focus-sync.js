@@ -44,6 +44,7 @@
   var deviceId = null;
   var remote = emptyBlob();
   var pushTimer = null;
+  var pushDeadline = 0;  // wall-clock ms the pending pushTimer fires at
   var inFlight = false;
   var lastPushedJSON = '';
 
@@ -275,7 +276,12 @@
     var me = getDeviceId();
     blob.v = 1;
     blob.devices = blob.devices || {};
-    blob.devices[me] = { name: deviceName(), lastSeen: Date.now() };
+    // lastSeen is quantized to 5-minute steps so an idle read-merge produces
+    // byte-identical JSON to the last push. That identity is what lets sync()
+    // skip the write: steady-state polling costs one GET, not a GET + POST —
+    // which is what makes the app's 15s visible-poll affordable.
+    var LASTSEEN_STEP = 5 * 60000;
+    blob.devices[me] = { name: deviceName(), lastSeen: Math.floor(Date.now() / LASTSEEN_STEP) * LASTSEEN_STEP };
 
     blob.stats = blob.stats || {};
     blob.stats[me] = trimStats(local.stats);
@@ -395,15 +401,21 @@
       }
     },
 
-    /** Coalesce bursts of local changes into one network write. */
+    /** Coalesce bursts of local changes into one network write. The earliest
+     *  requested fire time wins: an urgent schedule (task completed, focus
+     *  switched) is never postponed by a routine one landing right after it. */
     schedule: function (delayMs) {
+      var fireAt = Date.now() + (delayMs == null ? 8000 : delayMs);
+      if (pushTimer && pushDeadline && pushDeadline <= fireAt) return;
       clearTimeout(pushTimer);
-      pushTimer = setTimeout(function () { Sync.sync(); }, delayMs == null ? 8000 : delayMs);
+      pushDeadline = fireAt;
+      pushTimer = setTimeout(function () { pushDeadline = 0; Sync.sync(); }, Math.max(0, fireAt - Date.now()));
     },
 
     /** Fire immediately, e.g. when the app is being backgrounded. */
     flush: function () {
       clearTimeout(pushTimer);
+      pushDeadline = 0;
       return Sync.sync();
     }
   };

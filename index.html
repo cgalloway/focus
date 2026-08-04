@@ -754,7 +754,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 7 · updated August 3, 2026</div>
+                <div class="app-version">Version 8 · updated August 4, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -1005,7 +1005,7 @@
                     _sessionSig = sig;
                     _sessionAt = Date.now();
                     localStorage.setItem('focus_session_at', String(_sessionAt));
-                    scheduleSync();
+                    scheduleSync(true); // session shape changed — the other device should hear soon
                 }
                 persistTimeLeft(); // rides along so the remainder store stays pruned to the session
             } catch (e) { /* ignore quota/serialize errors */ }
@@ -1130,7 +1130,7 @@
                 if (bump) {
                     _goalsAt = Date.now();
                     localStorage.setItem('focus_goals_at', String(_goalsAt));
-                    scheduleSync();
+                    scheduleSync(true); // a goal edit is a deliberate act — push it promptly
                 }
             } catch (e) { /* quota — best effort */ }
         }
@@ -1234,8 +1234,13 @@
         // =====================================================================
         let _syncReady = false;
 
-        function scheduleSync() {
-            if (_syncReady) FocusSync.schedule();
+        // fast=true pushes in ~1s instead of the routine 8s debounce. Used at
+        // the moments the other device visibly lags: a task completed, focus
+        // switched, the session or settings edited. Stats and elapsed keep the
+        // slow lane — they only matter in aggregate, and the fast push carries
+        // them along anyway (sync always sends the whole local state).
+        function scheduleSync(fast) {
+            if (_syncReady) FocusSync.schedule(fast ? 1200 : undefined);
         }
 
         // Snapshot of everything worth sharing. Session carries task IDs only —
@@ -1262,6 +1267,38 @@
             };
         }
 
+        // A winning remote session can reference task ids this device hasn't
+        // synced yet (tasks created on the other device moments ago). The known
+        // ones apply immediately; the full id list is parked here and retried
+        // after each task sync until the bodies arrive, so the session heals
+        // instead of staying short. Cleared when a newer session edit happens.
+        let _sessionRefill = null; // { at, ids, idx }
+        function trySessionRefill() {
+            if (!_sessionRefill) return;
+            if (_sessionAt !== _sessionRefill.at) { _sessionRefill = null; return; } // superseded
+            const full = _sessionRefill.ids.map(id => itemsById[id]).filter(Boolean);
+            if (full.length <= tasks.length) return; // bodies not here yet — keep waiting
+            const newIndex = Math.min(Math.max(0, _sessionRefill.idx), Math.max(0, full.length - 1));
+            const prevId = tasks[currentIndex] ? String(tasks[currentIndex].id) : null;
+            const nextId = full[newIndex] ? String(full[newIndex].id) : null;
+            const focusChanged = prevId !== nextId;
+            let wasRunning = false;
+            if (focusChanged) {
+                wasRunning = !isOnBreak && timerRunning;
+                if (wasRunning) pauseTimer();
+                stashCurrentTaskTimer();
+            }
+            tasks = full;
+            currentIndex = newIndex;
+            if (full.length === _sessionRefill.ids.length) _sessionRefill = null; // fully restored
+            _sessionSig = sessionSignature(); // not a local edit — don't claim authorship
+            localStorage.setItem('focus_session', JSON.stringify({ tasks, currentIndex, day: sessionDay }));
+            if (focusChanged) armTimerForArrival(wasRunning, false);
+            renderCurrentTask();
+            updateCompactBar();
+            if (taskOrderOverlay.classList.contains('active') && draggedIndex === null) renderTaskList();
+        }
+
         // Apply whatever the merge decided is authoritative. Guarded on `by`:
         // a blob whose winning entry is our own is already reflected locally.
         function applyRemoteState(blob) {
@@ -1271,8 +1308,8 @@
             const rs = blob.session;
             if (rs && rs.by !== me && (rs.at || 0) > _sessionAt && Array.isArray(rs.taskIds)) {
                 // Rehydrate from the local item store. IDs we don't know about
-                // (not synced yet, or completed elsewhere) are simply dropped —
-                // the next Todoist sync will fill in anything real.
+                // (not synced yet, or completed elsewhere) are dropped for now;
+                // _sessionRefill restores any that turn out to be real tasks.
                 const rebuilt = rs.taskIds.map(id => itemsById[String(id)]).filter(Boolean);
                 if (rebuilt.length || rs.taskIds.length === 0) {
                     // If the winning session moves focus to a different task,
@@ -1297,6 +1334,22 @@
                     localStorage.setItem('focus_session', JSON.stringify({ tasks, currentIndex, day: sessionDay }));
                     if (focusChanged) armTimerForArrival(wasRunning, false);
                     sessionChanged = true;
+                    // Any ids we didn't recognize are brand-new tasks the other
+                    // device just added. Fetch bodies now and restore them,
+                    // rather than leaving the session short until the 45s loop.
+                    _sessionRefill = rebuilt.length < rs.taskIds.length
+                        ? { at: rs.at, ids: rs.taskIds.map(String), idx: rs.currentIndex | 0 }
+                        : null;
+                    if (_sessionRefill && apiToken) {
+                        syncNow().then(ok => {
+                            if (ok) { allTasks = Object.values(itemsById); trySessionRefill(); }
+                        });
+                    }
+                } else if (apiToken) {
+                    // NONE of the ids are known here, so nothing was applied and
+                    // rs.at stays ahead of _sessionAt. Pull task bodies now; the
+                    // next sync pass re-applies with the store filled in.
+                    syncNow();
                 }
             }
 
@@ -1762,6 +1815,7 @@
             await syncNow();
             allTasks = Object.values(itemsById);
             applyItemsToSession();
+            trySessionRefill(); // restore remote-session tasks whose bodies just arrived
             persistSession();
             renderCurrentTask();
             updateCompactBar();
@@ -1777,10 +1831,23 @@
             if (_syncReady) FocusSync.sync();
         }, 45000);
 
+        // Cross-device pull, fast lane: while the app is on screen, read the
+        // sync blob every 15s instead of only riding the 45s task poll above.
+        // Steady-state cycles are a single GET — see the lastSeen quantization
+        // note in focus-sync.js — so this costs ~4 requests/min, and only while
+        // the window is actually visible: a hidden iOS page is frozen anyway,
+        // and a backgrounded desktop window catches up via the handlers below.
+        setInterval(() => {
+            if (!apiToken || !_syncReady) return;
+            if (document.visibilityState !== 'visible') return;
+            FocusSync.sync();
+        }, 15000);
+
         // ---- Sync at the moments that matter on a phone --------------------
         // iOS freezes timers the instant you leave the app and may kill the tab
         // outright, so the 45s poll cannot be relied on. Flush on the way out and
         // pull fresh state on the way back in.
+        let _lastActivePull = 0; // shared with the window-focus handler so wake events don't double-sync
         document.addEventListener('visibilitychange', () => {
             if (!_syncReady) return;
             if (document.visibilityState === 'hidden') {
@@ -1793,10 +1860,12 @@
                 // second for the next tick — the timer is anchored to a wall-clock
                 // end time, so it's accurate the moment we re-read it.
                 if (timerRunning) updateTimerDisplay();
+                _lastActivePull = Date.now();
                 FocusSync.sync();
                 syncNow().then(() => {
                     allTasks = Object.values(itemsById);
                     applyItemsToSession();
+                    trySessionRefill();
                     renderCurrentTask();
                     updateCompactBar();
                     checkDayRollover();
@@ -3268,7 +3337,7 @@
                 _settingsAt = Date.now();
                 localStorage.setItem('focus_settings_at', String(_settingsAt));
                 initSync();      // no-op once running; starts sync on first connect
-                scheduleSync();
+                scheduleSync(true);
                 if (!pomodoroEnabled && isOnBreak) {
                     // Pomodoro was turned off mid-break: clear the break state,
                     // otherwise the !isOnBreak guards suppress focus logging and
@@ -3483,7 +3552,25 @@
             updateCompactBar();
             showToast('Session refreshed for today');
         });
-        window.addEventListener('focus', checkDayRollover);
+        // Desktop: clicking back onto an always-visible window doesn't fire
+        // visibilitychange, so the "way back in" pull rides window focus too.
+        // Throttled via _lastActivePull — on iOS/web both events fire together
+        // on wake, and cmd-tabbing around shouldn't hammer the API.
+        window.addEventListener('focus', () => {
+            checkDayRollover();
+            if (!_syncReady || !apiToken) return;
+            if (Date.now() - _lastActivePull < 10000) return;
+            _lastActivePull = Date.now();
+            if (timerRunning) updateTimerDisplay();
+            FocusSync.sync();
+            syncNow().then(() => {
+                allTasks = Object.values(itemsById);
+                applyItemsToSession();
+                trySessionRefill();
+                renderCurrentTask();
+                updateCompactBar();
+            });
+        });
         apiTokenInput.addEventListener('keypress', e => { if (e.key === 'Enter') connectBtn.click(); });
         document.addEventListener('keydown', e => {
             // Esc closes the shortcuts overlay regardless of focus context

@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 // Keep in lockstep with the visible "Version N" line in index.html's settings.
-const CACHE_VERSION = 'focus-v7';
+const CACHE_VERSION = 'focus-v8';
 const SHELL_CACHE = CACHE_VERSION + '-shell';
 const ASSET_CACHE = CACHE_VERSION + '-assets';
 
