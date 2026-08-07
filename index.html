@@ -269,12 +269,14 @@
             width: 90%; max-width: 320px; box-shadow: 0 10px 40px rgba(0,0,0,0.15);
             -webkit-app-region: no-drag;
         }
-        .task-order-modal { max-width: 680px; width: 92%; max-height: 90vh; display: flex; flex-direction: column; padding: 1.5rem; }
+        /* Sized relative to the window so the list and search results get real
+           room; position:relative anchors the inline goal popover. */
+        .task-order-modal { max-width: 1080px; width: 94%; height: 92vh; max-height: 92vh; display: flex; flex-direction: column; padding: 1.5rem; position: relative; }
         .timer-edit-modal h3, .task-order-modal h3 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 1.25rem; margin-bottom: 1rem; text-align: center; }
         .search-section { margin-bottom: 1rem; }
         .search-input { width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.95rem; font-family: inherit; }
         .search-input:focus { outline: none; border-color: var(--accent); }
-        .search-results { max-height: 180px; overflow-y: auto; margin-top: 0.5rem; }
+        .search-results { max-height: min(30vh, 320px); overflow-y: auto; margin-top: 0.5rem; }
         .search-result-item.keyboard-selected { border-color: var(--accent); background: rgba(45, 90, 61, 0.05); }
         .search-results:empty { display: none; }
         .search-result-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: var(--card-bg); border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; border: 1px solid var(--border); }
@@ -392,6 +394,31 @@
         .task-goal-btn:hover { border-color: var(--accent); color: var(--accent); }
         .task-goal-btn.on { border-color: var(--accent); color: var(--accent); background: rgba(45, 90, 61, 0.08); }
         .task-goal-btn.paused { border-style: dashed; }
+
+        /* Inline goal popover — edits a row's time goal without leaving
+           Manage Tasks. Anchored to the clock button that opened it. */
+        .goal-popover {
+            position: absolute; z-index: 30; width: 252px;
+            background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
+            box-shadow: 0 10px 32px rgba(0,0,0,0.18); padding: 0.8rem 0.8rem 0.55rem;
+            display: none;
+        }
+        .goal-popover.active { display: block; }
+        .goal-popover .goal-presets { margin-bottom: 0.6rem; }
+        .goal-pop-custom { display: flex; align-items: center; justify-content: center; gap: 0.4rem; margin-bottom: 0.2rem; }
+        .goal-pop-custom input {
+            width: 58px; padding: 0.4rem; border: 1px solid var(--border); border-radius: 6px;
+            font-size: 1rem; text-align: center; font-family: inherit;
+        }
+        .goal-pop-custom input:focus { outline: none; border-color: var(--accent); }
+        .goal-pop-custom span { font-size: 0.8rem; color: var(--text-secondary); }
+        .goal-pop-set {
+            padding: 0.4rem 0.85rem; border: none; border-radius: 6px; background: var(--accent);
+            color: white; font-family: inherit; font-size: 0.8rem; cursor: pointer;
+        }
+        .goal-pop-set:hover { background: var(--accent-hover); }
+        .goal-popover .toggle-row { padding: 0.4rem 0 0.15rem; font-size: 0.85rem; }
+        .goal-popover .goal-remove { margin: 0.25rem auto 0; }
         /* Overtime — the countdown has passed zero and is now counting up. */
         .timer-display.overtime, .compact-timer.overtime { color: var(--timer-danger); }
 
@@ -616,6 +643,8 @@
             html.is-web .shortcuts-modal,
             html.is-web .task-order-modal,
             html.is-web .timer-edit-modal { width: 100%; max-width: 100%; max-height: 88dvh; }
+            /* Phones keep the content-sized sheet; the fixed 92vh is desktop-only. */
+            html.is-web .task-order-modal { height: auto; }
             /* 16px is the threshold below which iOS zooms the page on focus. */
             html.is-web input, html.is-web select, html.is-web textarea { font-size: 16px; }
         }
@@ -881,6 +910,26 @@
             </div>
             <div class="task-list" id="taskList"></div>
             <button class="close-modal-btn" id="closeTaskOrder">Done</button>
+            <div class="goal-popover" id="goalPopover">
+                <div class="goal-presets">
+                    <button class="goal-preset" data-mins="5">5m</button>
+                    <button class="goal-preset" data-mins="10">10m</button>
+                    <button class="goal-preset" data-mins="15">15m</button>
+                    <button class="goal-preset" data-mins="25">25m</button>
+                    <button class="goal-preset" data-mins="45">45m</button>
+                </div>
+                <div class="goal-pop-custom">
+                    <input type="number" id="popGoalMinutes" min="1" max="999" value="15">
+                    <span>min</span>
+                    <button class="goal-pop-set" id="popGoalSet">Set</button>
+                </div>
+                <label class="toggle-row">
+                    <span>Challenge timer</span>
+                    <input type="checkbox" id="popGoalToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+                <button class="goal-remove hidden" id="popGoalRemove">Remove goal</button>
+            </div>
         </div>
     </div>
     <div class="shortcuts-overlay" id="shortcutsOverlay">
@@ -2771,9 +2820,7 @@
             const g = goalFor(task);
             goalTaskName.textContent = task.content;
             goalEnabledToggle.checked = g ? !!g.enabled : true;
-            // Seed a new goal from the Todoist estimate when there is one.
-            const durMins = task.duration && task.duration.unit === 'minute' ? Number(task.duration.amount) : NaN;
-            goalMinutesInput.value = g ? g.minutes : (Number.isFinite(durMins) && durMins > 0 ? Math.min(durMins, 999) : 15);
+            goalMinutesInput.value = g ? g.minutes : goalSeedMinutes(task);
             goalRemoveBtn.classList.toggle('hidden', !g);
             syncGoalPresets();
             goalOverlay.classList.add('active');
@@ -2788,29 +2835,145 @@
             if (taskOrderOverlay.classList.contains('active')) renderTaskList();
         }
 
-        function saveGoalFromModal() {
-            const task = goalEditTask();
-            if (!task) { closeGoalModal(); return; }
-            const mins = Math.min(999, Math.max(1, parseInt(goalMinutesInput.value) || 0));
+        // Shared by the full-screen editor and the Manage Tasks popover.
+        function commitGoal(task, mins, enabled) {
             const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
-            taskGoals[String(task.id)] = { minutes: mins, enabled: goalEnabledToggle.checked, ts: Date.now() };
+            taskGoals[String(task.id)] = { minutes: mins, enabled, ts: Date.now() };
             saveGoals();
-            closeGoalModal();
             // The user just asked for this length, so re-arm the timer to match.
             if (wasCurrent) armTimerForCurrentTask();
             refreshGoalViews();
         }
 
-        function removeGoalFromModal() {
-            const task = goalEditTask();
-            if (!task) { closeGoalModal(); return; }
+        function deleteGoal(task) {
             const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
             delete taskGoals[String(task.id)];
             saveGoals();
-            closeGoalModal();
             if (wasCurrent) armTimerForCurrentTask();
             refreshGoalViews();
         }
+
+        // A new goal starts from the Todoist estimate when there is one.
+        function goalSeedMinutes(task) {
+            const durMins = task.duration && task.duration.unit === 'minute' ? Number(task.duration.amount) : NaN;
+            return Number.isFinite(durMins) && durMins > 0 ? Math.min(durMins, 999) : 15;
+        }
+
+        function saveGoalFromModal() {
+            const task = goalEditTask();
+            if (!task) { closeGoalModal(); return; }
+            const mins = Math.min(999, Math.max(1, parseInt(goalMinutesInput.value) || 0));
+            closeGoalModal();
+            commitGoal(task, mins, goalEnabledToggle.checked);
+        }
+
+        function removeGoalFromModal() {
+            const task = goalEditTask();
+            if (!task) { closeGoalModal(); return; }
+            closeGoalModal();
+            deleteGoal(task);
+        }
+
+        // ---- Inline goal popover (Manage Tasks rows) ----
+        // Same editor as the goal modal, but anchored to the clock button so
+        // the whole edit happens inside the Manage Tasks window.
+        const goalPopover = $('goalPopover'), popGoalMinutes = $('popGoalMinutes');
+        const popGoalToggle = $('popGoalToggle'), popGoalRemove = $('popGoalRemove'), popGoalSet = $('popGoalSet');
+        let _popTaskId = null, _popDirty = false, _popSameAnchor = false;
+
+        function popTask() { return _popTaskId === null ? null : tasks.find(t => String(t.id) === _popTaskId) || null; }
+        function popMinutes() { return Math.min(999, Math.max(1, parseInt(popGoalMinutes.value) || 0)); }
+        function syncPopPresets() {
+            const val = parseInt(popGoalMinutes.value);
+            goalPopover.querySelectorAll('.goal-preset').forEach(b => b.classList.toggle('selected', parseInt(b.dataset.mins) === val));
+        }
+
+        function openGoalPopover(index, anchorBtn) {
+            const task = tasks[index];
+            if (!task) return;
+            _popTaskId = String(task.id);
+            _popDirty = false;
+            const g = goalFor(task);
+            popGoalToggle.checked = g ? !!g.enabled : true;
+            popGoalMinutes.value = g ? g.minutes : goalSeedMinutes(task);
+            popGoalRemove.classList.toggle('hidden', !g);
+            syncPopPresets();
+            // Render first so the height is measurable, then place beside the
+            // clicked button — below it normally, above near the modal's bottom.
+            goalPopover.classList.add('active');
+            const modal = goalPopover.parentElement;
+            const mRect = modal.getBoundingClientRect(), bRect = anchorBtn.getBoundingClientRect();
+            const popW = goalPopover.offsetWidth, popH = goalPopover.offsetHeight;
+            const left = Math.max(8, Math.min(bRect.right - mRect.left - popW, modal.clientWidth - popW - 8));
+            let top = bRect.bottom - mRect.top + 6;
+            if (top + popH > modal.clientHeight - 8) top = bRect.top - mRect.top - popH - 6;
+            goalPopover.style.left = left + 'px';
+            goalPopover.style.top = Math.max(8, top) + 'px';
+            popGoalMinutes.focus();
+            popGoalMinutes.select();
+        }
+
+        function closeGoalPopover(save) {
+            if (!goalPopover.classList.contains('active')) return;
+            const task = popTask();
+            if (save && _popDirty && task) commitGoal(task, popMinutes(), popGoalToggle.checked);
+            goalPopover.classList.remove('active');
+            _popTaskId = null; _popDirty = false;
+        }
+
+        function savePopoverAndClose() {
+            const task = popTask();
+            if (task) commitGoal(task, popMinutes(), popGoalToggle.checked);
+            closeGoalPopover(false);
+        }
+
+        // A preset is a one-click edit: set the length, save, done.
+        goalPopover.addEventListener('click', e => {
+            const preset = e.target.closest('.goal-preset');
+            if (preset) { popGoalMinutes.value = preset.dataset.mins; savePopoverAndClose(); }
+        });
+        popGoalSet.addEventListener('click', savePopoverAndClose);
+        popGoalMinutes.addEventListener('input', () => { _popDirty = true; syncPopPresets(); });
+        popGoalMinutes.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); savePopoverAndClose(); }
+        });
+        // The switch applies immediately — the row updates while the popover
+        // stays open for further tweaks.
+        popGoalToggle.addEventListener('change', () => {
+            const task = popTask();
+            if (!task) return;
+            commitGoal(task, popMinutes(), popGoalToggle.checked);
+            _popDirty = false;
+            popGoalRemove.classList.remove('hidden');
+            showToast(popGoalToggle.checked ? `Challenge timer on — ${popMinutes()} min` : 'Challenge timer off');
+        });
+        popGoalRemove.addEventListener('click', () => {
+            const task = popTask();
+            closeGoalPopover(false);
+            if (task) deleteGoal(task);
+        });
+        // Click-away commits a typed change; Esc discards it. Capture phase so
+        // the popover wins over the modal's own Escape/click handling. Clicking
+        // the popover's own clock button again just closes (the reopen guard
+        // stops the pointerup that follows from reopening it).
+        document.addEventListener('pointerdown', e => {
+            if (!goalPopover.classList.contains('active')) { _popSameAnchor = false; return; }
+            if (goalPopover.contains(e.target)) return;
+            const btn = e.target.closest('.task-goal-btn');
+            const item = btn && btn.closest('.task-item');
+            const t = item && tasks[parseInt(item.dataset.index)];
+            _popSameAnchor = !!(t && String(t.id) === _popTaskId);
+            closeGoalPopover(true);
+        }, true);
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && goalPopover.classList.contains('active')) {
+                closeGoalPopover(false);
+                e.stopImmediatePropagation();
+                e.preventDefault();
+            }
+        }, true);
+        // The anchor row scrolls out from under the popover — just settle up.
+        taskList.addEventListener('scroll', () => closeGoalPopover(true));
 
         // Quick on/off from the chip's mini-switch or the G shortcut. With no
         // goal yet there's nothing to toggle, so open the editor instead.
@@ -3131,7 +3294,10 @@
                 const item = upBtn.closest('.task-item');
                 if (item) {
                     const idx = parseInt(item.dataset.index);
-                    if (upBtn.classList.contains('task-goal-btn')) openGoalModal(idx);
+                    if (upBtn.classList.contains('task-goal-btn')) {
+                        if (!_popSameAnchor) openGoalPopover(idx, upBtn);
+                        _popSameAnchor = false;
+                    }
                     else if (upBtn.classList.contains('task-done-btn')) completeTaskAt(idx, upBtn);
                     else removeTaskFromSession(idx);
                 }
@@ -3514,6 +3680,7 @@
         // suppressed by Electron/macOS when the body is a window-drag region;
         // pointerup fires regardless. Removing 'active' twice is a no-op.
         const closeManageTasks = () => {
+            closeGoalPopover(true);
             taskOrderOverlay.classList.remove('active');
             // Clamp in case tasks were removed while the modal was open — never
             // discard a selection the user just made in the list.
