@@ -357,14 +357,7 @@
         .mini-switch.on { background: var(--accent); }
         .mini-switch.on::after { transform: translateX(11px); }
 
-        /* Goal editor modal */
-        .goal-overlay { z-index: 101; }
-        .goal-task-name {
-            font-size: 0.85rem; color: var(--text-secondary); text-align: center;
-            margin: -0.5rem 0 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        /* Wider than the plain timer editor so all five presets sit on one row. */
-        .goal-overlay .timer-edit-modal { max-width: 360px; }
+        /* Goal editor (shared by the popover) */
         .goal-presets { display: flex; gap: 0.3rem; justify-content: center; margin-bottom: 0.9rem; }
         .goal-preset {
             flex: 1 1 0; min-width: 0; padding: 0.35rem 0.2rem;
@@ -379,8 +372,6 @@
         }
         .goal-remove:hover { text-decoration: underline; }
         .goal-remove.hidden { display: none; }
-        /* Dimmed, but still editable — you can set the length now and switch it on later. */
-        .goal-disabled { opacity: 0.45; }
 
         /* Per-row goal button in Manage Tasks */
         .task-goal-btn {
@@ -395,10 +386,11 @@
         .task-goal-btn.on { border-color: var(--accent); color: var(--accent); background: rgba(45, 90, 61, 0.08); }
         .task-goal-btn.paused { border-style: dashed; }
 
-        /* Inline goal popover — edits a row's time goal without leaving
-           Manage Tasks. Anchored to the clock button that opened it. */
+        /* Goal popover — the one goal editor. Anchored to whatever opened it:
+           a Manage Tasks row's clock button or the main screen's goal chip.
+           Fixed + above the modal overlays (z-index 100) so it works in both. */
         .goal-popover {
-            position: absolute; z-index: 30; width: 252px;
+            position: fixed; z-index: 130; width: 252px;
             background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
             box-shadow: 0 10px 32px rgba(0,0,0,0.18); padding: 0.8rem 0.8rem 0.55rem;
             display: none;
@@ -788,7 +780,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 10 · updated August 7, 2026</div>
+                <div class="app-version">Version 11 · updated August 7, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -863,36 +855,6 @@
             </div>
         </div>
     </div>
-    <div class="timer-edit-overlay goal-overlay" id="goalOverlay">
-        <div class="timer-edit-modal">
-            <h3>Time Goal</h3>
-            <div class="goal-task-name" id="goalTaskName"></div>
-            <label class="toggle-row" style="padding-top:0;">
-                <span>Challenge timer</span>
-                <input type="checkbox" id="goalEnabledToggle">
-                <span class="toggle-slider"></span>
-            </label>
-            <p class="toggle-hint">On, the timer counts down from your estimate for this task — and counts up in red if you run past it. Off, this task uses the normal session length.</p>
-            <div id="goalFields">
-                <div class="goal-presets" id="goalPresets">
-                    <button class="goal-preset" data-mins="5">5m</button>
-                    <button class="goal-preset" data-mins="10">10m</button>
-                    <button class="goal-preset" data-mins="15">15m</button>
-                    <button class="goal-preset" data-mins="25">25m</button>
-                    <button class="goal-preset" data-mins="45">45m</button>
-                </div>
-                <div class="time-inputs">
-                    <input type="number" id="goalMinutes" min="1" max="999" value="15">
-                    <span style="font-size:1rem;">min</span>
-                </div>
-            </div>
-            <div class="modal-buttons">
-                <button class="modal-cancel" id="goalCancel">Cancel</button>
-                <button class="modal-save" id="goalSave">Save</button>
-            </div>
-            <button class="goal-remove hidden" id="goalRemove">Remove goal</button>
-        </div>
-    </div>
     <div class="task-order-overlay" id="taskOrderOverlay">
         <div class="task-order-modal">
             <h3>Manage Tasks</h3>
@@ -910,27 +872,27 @@
             </div>
             <div class="task-list" id="taskList"></div>
             <button class="close-modal-btn" id="closeTaskOrder">Done</button>
-            <div class="goal-popover" id="goalPopover">
-                <div class="goal-presets">
-                    <button class="goal-preset" data-mins="5">5m</button>
-                    <button class="goal-preset" data-mins="10">10m</button>
-                    <button class="goal-preset" data-mins="15">15m</button>
-                    <button class="goal-preset" data-mins="25">25m</button>
-                    <button class="goal-preset" data-mins="45">45m</button>
-                </div>
-                <div class="goal-pop-custom">
-                    <input type="number" id="popGoalMinutes" min="1" max="999" value="15">
-                    <span>min</span>
-                    <button class="goal-pop-set" id="popGoalSet">Set</button>
-                </div>
-                <label class="toggle-row">
-                    <span>Challenge timer</span>
-                    <input type="checkbox" id="popGoalToggle">
-                    <span class="toggle-slider"></span>
-                </label>
-                <button class="goal-remove hidden" id="popGoalRemove">Remove goal</button>
-            </div>
         </div>
+    </div>
+    <div class="goal-popover" id="goalPopover">
+        <div class="goal-presets">
+            <button class="goal-preset" data-mins="5">5m</button>
+            <button class="goal-preset" data-mins="10">10m</button>
+            <button class="goal-preset" data-mins="15">15m</button>
+            <button class="goal-preset" data-mins="25">25m</button>
+            <button class="goal-preset" data-mins="45">45m</button>
+        </div>
+        <div class="goal-pop-custom">
+            <input type="number" id="popGoalMinutes" min="1" max="999" value="15">
+            <span>min</span>
+            <button class="goal-pop-set" id="popGoalSet">Set</button>
+        </div>
+        <label class="toggle-row">
+            <span>Challenge timer</span>
+            <input type="checkbox" id="popGoalToggle">
+            <span class="toggle-slider"></span>
+        </label>
+        <button class="goal-remove hidden" id="popGoalRemove">Remove goal</button>
     </div>
     <div class="shortcuts-overlay" id="shortcutsOverlay">
         <div class="shortcuts-modal">
@@ -2791,51 +2753,13 @@
             chip.classList.add(state);
         }
 
-        // ---- Goal editor ----
-        const goalOverlay = $('goalOverlay'), goalTaskName = $('goalTaskName'), goalEnabledToggle = $('goalEnabledToggle');
-        const goalMinutesInput = $('goalMinutes'), goalPresets = $('goalPresets'), goalFields = $('goalFields');
-        const goalSaveBtn = $('goalSave'), goalCancelBtn = $('goalCancel'), goalRemoveBtn = $('goalRemove');
-        // Keyed by task id, not index: the 45s background poll can prune tasks
-        // while the editor is open, and an index would then point at a
-        // different task by the time Save is pressed.
-        let _goalEditTaskId = null;
-        function goalEditTask() {
-            return _goalEditTaskId === null ? null : tasks.find(t => String(t.id) === _goalEditTaskId) || null;
-        }
-
-        function syncGoalPresets() {
-            const val = parseInt(goalMinutesInput.value);
-            goalPresets.querySelectorAll('.goal-preset').forEach(b => {
-                b.classList.toggle('selected', parseInt(b.dataset.mins) === val);
-            });
-            goalFields.classList.toggle('goal-disabled', !goalEnabledToggle.checked);
-        }
-
-        function openGoalModal(index) {
-            const task = tasks[index];
-            if (!task) return;
-            // The pill is too small to host a modal — expand first.
-            if (isCompact) toggleCompactMode();
-            _goalEditTaskId = String(task.id);
-            const g = goalFor(task);
-            goalTaskName.textContent = task.content;
-            goalEnabledToggle.checked = g ? !!g.enabled : true;
-            goalMinutesInput.value = g ? g.minutes : goalSeedMinutes(task);
-            goalRemoveBtn.classList.toggle('hidden', !g);
-            syncGoalPresets();
-            goalOverlay.classList.add('active');
-            goalMinutesInput.focus();
-            goalMinutesInput.select();
-        }
-        function closeGoalModal() { goalOverlay.classList.remove('active'); _goalEditTaskId = null; }
-
+        // ---- Goal editing ----
         // Re-render every surface a goal can appear on.
         function refreshGoalViews() {
             renderCurrentTask();
             if (taskOrderOverlay.classList.contains('active')) renderTaskList();
         }
 
-        // Shared by the full-screen editor and the Manage Tasks popover.
         function commitGoal(task, mins, enabled) {
             const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
             taskGoals[String(task.id)] = { minutes: mins, enabled, ts: Date.now() };
@@ -2859,24 +2783,9 @@
             return Number.isFinite(durMins) && durMins > 0 ? Math.min(durMins, 999) : 15;
         }
 
-        function saveGoalFromModal() {
-            const task = goalEditTask();
-            if (!task) { closeGoalModal(); return; }
-            const mins = Math.min(999, Math.max(1, parseInt(goalMinutesInput.value) || 0));
-            closeGoalModal();
-            commitGoal(task, mins, goalEnabledToggle.checked);
-        }
-
-        function removeGoalFromModal() {
-            const task = goalEditTask();
-            if (!task) { closeGoalModal(); return; }
-            closeGoalModal();
-            deleteGoal(task);
-        }
-
-        // ---- Inline goal popover (Manage Tasks rows) ----
-        // Same editor as the goal modal, but anchored to the clock button so
-        // the whole edit happens inside the Manage Tasks window.
+        // ---- Goal popover — the one goal editor ----
+        // Anchored to whatever opened it: a Manage Tasks row's clock button or
+        // the main screen's goal chip.
         const goalPopover = $('goalPopover'), popGoalMinutes = $('popGoalMinutes');
         const popGoalToggle = $('popGoalToggle'), popGoalRemove = $('popGoalRemove'), popGoalSet = $('popGoalSet');
         let _popTaskId = null, _popDirty = false, _popSameAnchor = false;
@@ -2899,18 +2808,25 @@
             popGoalRemove.classList.toggle('hidden', !g);
             syncPopPresets();
             // Render first so the height is measurable, then place beside the
-            // clicked button — below it normally, above near the modal's bottom.
+            // anchor — below it normally, above when too close to the bottom.
             goalPopover.classList.add('active');
-            const modal = goalPopover.parentElement;
-            const mRect = modal.getBoundingClientRect(), bRect = anchorBtn.getBoundingClientRect();
+            const bRect = anchorBtn.getBoundingClientRect();
             const popW = goalPopover.offsetWidth, popH = goalPopover.offsetHeight;
-            const left = Math.max(8, Math.min(bRect.right - mRect.left - popW, modal.clientWidth - popW - 8));
-            let top = bRect.bottom - mRect.top + 6;
-            if (top + popH > modal.clientHeight - 8) top = bRect.top - mRect.top - popH - 6;
+            const left = Math.max(8, Math.min(bRect.right - popW, window.innerWidth - popW - 8));
+            let top = bRect.bottom + 6;
+            if (top + popH > window.innerHeight - 8) top = bRect.top - popH - 6;
             goalPopover.style.left = left + 'px';
             goalPopover.style.top = Math.max(8, top) + 'px';
             popGoalMinutes.focus();
             popGoalMinutes.select();
+        }
+
+        // Entry point for the main screen's goal chip and the E shortcut.
+        function editGoalForCurrent() {
+            // The pill is too small to host the editor — expand first.
+            if (isCompact) toggleCompactMode();
+            const chip = $('goalChip');
+            if (chip) openGoalPopover(currentIndex, chip);
         }
 
         function closeGoalPopover(save) {
@@ -2981,7 +2897,7 @@
             const task = tasks[index];
             if (!task) return;
             const g = goalFor(task);
-            if (!g) { openGoalModal(index); return; }
+            if (!g) { editGoalForCurrent(); return; }
             taskGoals[String(task.id)] = { ...g, enabled: !g.enabled, ts: Date.now() };
             saveGoals();
             if (index === currentIndex) armTimerForCurrentTask();
@@ -3633,7 +3549,7 @@
             if (e.target.closest('#emptyAddBtn')) { reorderBtn.click(); return; }
             // The mini-switch flips the goal in place; the rest of the chip edits it.
             if (e.target.closest('#goalQuickToggle')) { e.stopPropagation(); toggleGoalForTask(currentIndex); return; }
-            if (e.target.closest('#goalChip')) openGoalModal(currentIndex);
+            if (e.target.closest('#goalChip')) editGoalForCurrent();
         });
         taskArea.addEventListener('keydown', e => {
             if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -3642,23 +3558,9 @@
             // as play/pause and Enter as "complete task".
             e.preventDefault();
             e.stopPropagation();
-            openGoalModal(currentIndex);
+            editGoalForCurrent();
         });
 
-        // Goal modal wiring
-        goalCancelBtn.addEventListener('click', closeGoalModal);
-        goalSaveBtn.addEventListener('click', saveGoalFromModal);
-        goalRemoveBtn.addEventListener('click', removeGoalFromModal);
-        goalOverlay.addEventListener('click', e => { if (e.target === goalOverlay) closeGoalModal(); });
-        goalEnabledToggle.addEventListener('change', syncGoalPresets);
-        goalMinutesInput.addEventListener('input', syncGoalPresets);
-        goalMinutesInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveGoalFromModal(); } });
-        goalPresets.addEventListener('click', e => {
-            const btn = e.target.closest('.goal-preset');
-            if (!btn) return;
-            goalMinutesInput.value = btn.dataset.mins;
-            syncGoalPresets();
-        });
         timerEditCancel.addEventListener('click', () => timerEditOverlay.classList.remove('active'));
         timerEditSave.addEventListener('click', () => { timerManuallySet = true; setTimer(parseInt(timerMinutesInput.value) || 0, parseInt(timerSecondsInput.value) || 0); timerEditOverlay.classList.remove('active'); });
         timerEditOverlay.addEventListener('click', e => { if (e.target === timerEditOverlay) timerEditOverlay.classList.remove('active'); });
@@ -3716,7 +3618,6 @@
         // without it the later document keydown listener sees the overlay as
         // already closed and would also skip an active break.
         // The goal editor can be layered over Manage Tasks, so it claims Esc first.
-        document.addEventListener('keydown', e => { if (e.key === 'Escape' && goalOverlay.classList.contains('active')) { closeGoalModal(); e.stopImmediatePropagation(); } });
         document.addEventListener('keydown', e => { if (e.key === 'Escape' && taskOrderOverlay.classList.contains('active')) { closeManageTasks(); e.stopImmediatePropagation(); } });
         taskOrderOverlay.addEventListener('click', e => { if (e.target === taskOrderOverlay) closeManageTasks(); });
         skipBtn.addEventListener('click', goToNextTask);
@@ -3787,13 +3688,13 @@
             if ($('breakOverlay').classList.contains('active')
                 && !taskOrderOverlay.classList.contains('active')
                 && !timerEditOverlay.classList.contains('active')
-                && !goalOverlay.classList.contains('active')
+                && !goalPopover.classList.contains('active')
                 && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
                 if (e.key === 'Enter' || e.code === 'Space') { e.preventDefault(); startBreakBtn.click(); }
                 else if (e.key === 'Escape') { e.preventDefault(); skipBreakBtn.click(); }
                 return;
             }
-            if (!focusScreen.classList.contains('active') || timerEditOverlay.classList.contains('active') || taskOrderOverlay.classList.contains('active') || shortcutsOverlay.classList.contains('active') || goalOverlay.classList.contains('active')) return;
+            if (!focusScreen.classList.contains('active') || timerEditOverlay.classList.contains('active') || taskOrderOverlay.classList.contains('active') || shortcutsOverlay.classList.contains('active') || goalPopover.classList.contains('active')) return;
             if (e.key === '?' && e.target.tagName !== 'INPUT') { e.preventDefault(); openShortcuts(); return; }
             if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); togglePlayPause(); }
             else if (e.code === 'Enter' && e.target.tagName !== 'INPUT') { e.preventDefault(); completeTask(); }
@@ -3802,7 +3703,7 @@
             else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); refreshBtn.click(); }
             else if (e.code === 'KeyM' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleCompactMode(); }
             else if (e.code === 'KeyO' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id); }
-            else if (e.code === 'KeyE' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) openGoalModal(currentIndex); }
+            else if (e.code === 'KeyE' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) editGoalForCurrent(); }
             else if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) toggleGoalForTask(currentIndex); }
         });
         // Screen routing is handled inside init() after the token loads asynchronously.
