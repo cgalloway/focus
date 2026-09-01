@@ -1639,26 +1639,121 @@
         function saveCachedProjects() {
             try { localStorage.setItem('todoist_projects_cache', JSON.stringify(projects)); } catch (e) {}
         }
-        // Persist the incremental sync store so Manage Tasks opens instantly
+        // ---- Item store persistence (IndexedDB, localStorage fallback) ----
+        // The incremental sync store is persisted so Manage Tasks opens instantly
         // even before the first network call completes.
-        function persistItemStore() {
-            try {
-                localStorage.setItem('todoist_items_v1', JSON.stringify(itemsById));
-                localStorage.setItem('todoist_sync_token_v1', syncToken || '');
-                if (currentUserId) localStorage.setItem('todoist_user_id', String(currentUserId));
-            } catch (e) { /* quota — best effort */ }
+        //
+        // It used to live in localStorage. That meant JSON-serialising every task
+        // into one string on each write, and a large account could exceed the
+        // ~5 MB quota — after which the write failed silently and every launch
+        // fell back to a full sync. IndexedDB stores the object by structured
+        // clone (no string round trip) with no such quota. localStorage remains
+        // the fallback where IndexedDB is missing or refuses to open, and the
+        // legacy copy is read once and migrated on the next successful write.
+        const IDB_NAME = 'focus', IDB_STORE = 'kv', IDB_ITEMS_KEY = 'items';
+        const LS_ITEMS = 'todoist_items_v1';
+        let _idb = null, _idbFailed = false;
+        function openItemDb() {
+            if (_idb) return Promise.resolve(_idb);
+            if (_idbFailed || typeof indexedDB === 'undefined') return Promise.resolve(null);
+            return new Promise(resolve => {
+                let settled = false;
+                const done = db => {
+                    if (settled) return;
+                    settled = true;
+                    if (db) _idb = db; else _idbFailed = true;
+                    resolve(db);
+                };
+                // Some WebKit builds have left open() pending indefinitely; never
+                // let the app's startup hang on it.
+                const guard = setTimeout(() => done(null), 3000);
+                try {
+                    const req = indexedDB.open(IDB_NAME, 1);
+                    req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
+                    req.onsuccess = () => { clearTimeout(guard); done(req.result); };
+                    req.onerror = req.onblocked = () => { clearTimeout(guard); done(null); };
+                } catch (e) { clearTimeout(guard); done(null); }
+            });
         }
-        function restoreItemStore() {
+        function idbGet(key) {
+            return openItemDb().then(db => new Promise(resolve => {
+                if (!db) return resolve(undefined);
+                try {
+                    const req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(undefined);
+                } catch (e) { resolve(undefined); }
+            }));
+        }
+        function idbSet(key, value) {
+            return openItemDb().then(db => new Promise((resolve, reject) => {
+                if (!db) return reject(new Error('IndexedDB unavailable'));
+                try {
+                    const tx = db.transaction(IDB_STORE, 'readwrite');
+                    tx.objectStore(IDB_STORE).put(value, key);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = tx.onabort = () => reject(tx.error || new Error('IndexedDB write failed'));
+                } catch (e) { reject(e); }
+            }));
+        }
+
+        // The sync token is only meaningful alongside the items it describes: a
+        // token newer than the stored items would make the next incremental
+        // sync build on a store that is missing changes. So the token is written
+        // after the items land, and never on its own unless the last items write
+        // succeeded.
+        let _itemsPersisted = false;
+        function persistSyncToken(tok = syncToken) {
+            if (!_itemsPersisted) return;
             try {
-                const raw = localStorage.getItem('todoist_items_v1');
+                localStorage.setItem('todoist_sync_token_v1', tok || '');
+                if (currentUserId) localStorage.setItem('todoist_user_id', String(currentUserId));
+            } catch (e) { /* best effort */ }
+        }
+        // Writes are serialised so two rapid persists can't land out of order.
+        let _persistChain = Promise.resolve();
+        function persistItemStore() {
+            const tok = syncToken;
+            _persistChain = _persistChain
+                .then(() => idbSet(IDB_ITEMS_KEY, itemsById))
+                .then(() => {
+                    _itemsPersisted = true;
+                    try { localStorage.removeItem(LS_ITEMS); } catch (e) {} // legacy copy migrated
+                    persistSyncToken(tok);
+                })
+                .catch(() => {
+                    // No IndexedDB: the old path, best effort. On quota failure
+                    // the stored token is left alone so items and token stay
+                    // consistent (the next launch simply syncs from that token).
+                    try {
+                        localStorage.setItem(LS_ITEMS, JSON.stringify(itemsById));
+                        _itemsPersisted = true;
+                        persistSyncToken(tok);
+                    } catch (e) { _itemsPersisted = false; }
+                });
+            return _persistChain;
+        }
+        async function restoreItemStore() {
+            try {
                 const tok = localStorage.getItem('todoist_sync_token_v1');
                 const uid = localStorage.getItem('todoist_user_id');
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    if (parsed && typeof parsed === 'object') itemsById = parsed;
-                }
-                syncToken = tok || null;
                 if (uid) currentUserId = uid;
+                let stored = await idbGet(IDB_ITEMS_KEY);
+                if (stored === undefined || stored === null) {
+                    // First launch on this build, or IndexedDB unavailable: the
+                    // legacy localStorage copy (migrated on the next persist).
+                    const raw = localStorage.getItem(LS_ITEMS);
+                    if (raw) stored = JSON.parse(raw);
+                }
+                if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+                    itemsById = stored;
+                    _itemsPersisted = true;
+                    syncToken = tok || null;
+                } else {
+                    // No items anywhere: ignore any stray token so the first sync
+                    // is a full one rather than a delta against nothing.
+                    itemsById = {}; syncToken = null;
+                }
             } catch (e) {
                 // Corrupt storage — start fresh (will trigger a full sync)
                 itemsById = {}; syncToken = null;
@@ -1797,11 +1892,21 @@
             return TODOIST_COLORS[project.color] || 'var(--accent)';
         }
         const wrapDigits = str => Array.from(String(str)).map(c => `<span class="digit">${c}</span>`).join('');
+        // The timer tick re-renders several elements every second. Most of them
+        // (icons, dots, the compact bar) rarely change, and rewriting innerHTML
+        // with identical markup still tears down and rebuilds the nodes. Compare
+        // against what was last written and skip the DOM entirely when equal.
+        const _lastHtml = new WeakMap();
+        function setHtmlIfChanged(el, html) {
+            if (!el || _lastHtml.get(el) === html) return;
+            _lastHtml.set(el, html);
+            el.innerHTML = html;
+        }
         function setTimerText(el, secs, prefix = '') {
             const m = Math.floor(secs / 60);
             const s = String(secs % 60).padStart(2, '0');
             const pre = prefix ? `<span class="digit">${prefix}</span>` : '';
-            el.innerHTML = pre + wrapDigits(m) + '<span class="colon">:</span>' + wrapDigits(s);
+            setHtmlIfChanged(el, pre + wrapDigits(m) + '<span class="colon">:</span>' + wrapDigits(s));
         }
         const setupScreen = $('setupScreen'), focusScreen = $('focusScreen'), apiTokenInput = $('apiToken');
         const filterSelect = $('filterSelect'), connectBtn = $('connectBtn'), settingsBtn = $('settingsBtn'), cancelSettingsBtn = $('cancelSettingsBtn');
@@ -1813,8 +1918,9 @@
         function updateStartButton() {
             if (!timerStartBtn) return;
             timerStartBtn.classList.toggle('running', timerRunning || inOvertime);
-            timerStartBtn.title = inOvertime ? 'Stop overtime (Space)' : (timerRunning ? 'Pause (Space)' : 'Start (Space)');
-            if (timerStartIcon) timerStartIcon.innerHTML = inOvertime ? STOP_ICON_HTML : (timerRunning ? PAUSE_ICON_HTML : PLAY_ICON_HTML);
+            const title = inOvertime ? 'Stop overtime (Space)' : (timerRunning ? 'Pause (Space)' : 'Start (Space)');
+            if (timerStartBtn.title !== title) timerStartBtn.title = title;
+            setHtmlIfChanged(timerStartIcon, inOvertime ? STOP_ICON_HTML : (timerRunning ? PAUSE_ICON_HTML : PLAY_ICON_HTML));
         }
         const skipBtn = $('skipBtn'), prevBtn = $('prevBtn'), refreshBtn = $('refreshBtn'), compactBtn = $('compactBtn'), completeBtn = $('completeBtn'), dropBtn = $('dropBtn');
         const timerEditOverlay = $('timerEditOverlay'), timerMinutesInput = $('timerMinutes');
@@ -1865,7 +1971,7 @@
         async function init() {
             // Restore persisted item store FIRST so allTasks is available instantly
             // (Manage Tasks opens without any network wait, even offline).
-            restoreItemStore();
+            await restoreItemStore();
             allTasks = Object.values(itemsById);
             loadGoals();
             loadElapsed();
@@ -1949,6 +2055,9 @@
         // so we don't interrupt the user mid-reorder.
         setInterval(async () => {
             if (!apiToken) return;
+            // A hidden window catches up the moment it becomes visible (handler
+            // below), so polling it only burns battery and API quota.
+            if (document.visibilityState === 'hidden') return;
             await syncNow();
             allTasks = Object.values(itemsById);
             applyItemsToSession();
@@ -1961,9 +2070,7 @@
                 searchTasks(taskSearchInput.value);
             }
             checkDayRollover(); // catches the app left running across midnight
-            // Midnight rollover of the stats display: reset the today line and
-            // pomodoro dots when the app runs across midnight.
-            if (localDateKey() !== _statsDay) { _statsDay = localDateKey(); pomodoroCount = 0; updatePomodoroDots(); renderStatsToday(); }
+            checkStatsDayRollover();
             // Cross-device sync rides the same 45s cadence.
             if (_syncReady) FocusSync.sync();
         }, 45000);
@@ -2008,6 +2115,7 @@
                     renderCurrentTask();
                     updateCompactBar();
                     checkDayRollover();
+                    checkStatsDayRollover();
                 });
             }
         });
@@ -2031,7 +2139,7 @@
             const minutes = Math.floor(shown / 60), seconds = shown % 60;
             const prefix = inOvertime ? `<span class="digit">+</span>` : '';
             const timeHtml = `${prefix}${wrapDigits(minutes)}<span class="colon">:</span>${wrapDigits(String(seconds).padStart(2,'0'))}`;
-            compactTimer.innerHTML = isOnBreak ? `☕ ${timeHtml}` : timeHtml;
+            setHtmlIfChanged(compactTimer, isOnBreak ? `☕ ${timeHtml}` : timeHtml);
             compactTimer.classList.toggle('running', timerRunning || inOvertime);
             compactTimer.classList.remove('warning', 'danger', 'finished', 'break-mode', 'overtime');
             if (inOvertime) compactTimer.classList.add('overtime');
@@ -2041,22 +2149,16 @@
             else if (timerSeconds <= warnThresholdSecs()) compactTimer.classList.add('warning');
 
             compactPlayPause.classList.toggle('active', timerRunning || inOvertime);
-            const playIcon = $('compactPlayIcon');
-            if (inOvertime) {
-                playIcon.innerHTML = STOP_ICON_HTML;
-            } else if (timerRunning) {
-                playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>';
-            } else {
-                playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>';
-            }
+            setHtmlIfChanged($('compactPlayIcon'), inOvertime
+                ? STOP_ICON_HTML
+                : (timerRunning
+                    ? '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>'
+                    : '<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>'));
 
-            if (tasks.length > 0 && tasks[currentIndex]) {
-                compactTask.textContent = tasks[currentIndex].content;
-                compactTask.onclick = () => openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id);
-            } else {
-                compactTask.textContent = 'No tasks';
-                compactTask.onclick = null;
-            }
+            const cur = tasks.length > 0 ? tasks[currentIndex] : null;
+            const label = cur ? cur.content : 'No tasks';
+            if (compactTask.textContent !== label) compactTask.textContent = label;
+            compactTask.onclick = cur ? () => openTaskInTodoist(cur.v2_id, cur.id) : null;
 
             compactPrev.disabled = tasks.length <= 1;
             compactNext.disabled = tasks.length <= 1;
@@ -2107,7 +2209,7 @@
                 ? 4 : pomodoroCount % 4;
             let html = '';
             for (let i = 0; i < 4; i++) html += `<span class="pomodoro-dot${i < filled ? ' filled' : ''}"></span>`;
-            pomodoroDots.innerHTML = html;
+            setHtmlIfChanged(pomodoroDots, html);
         }
 
         // `quiet` is for resuming a checkpointed timer on relaunch: no start
@@ -2445,7 +2547,7 @@
                 res = await fetchWithTimeout('https://api.todoist.com/api/v1/sync', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user"]`
+                    body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user","projects"]`
                 }, token === '*' ? 45000 : 15000); // a full sync of a big account is a large download
             } catch (e) {
                 // Network failure or timeout. Nothing is wrong with our sync token,
@@ -2482,6 +2584,25 @@
 
             if (data.user?.id) currentUserId = String(data.user.id);
 
+            // Projects ride the same call, incrementally. This replaced two extra
+            // requests per launch (paginated REST plus a full projects sync) that
+            // also re-ran every time Settings was opened.
+            if (Array.isArray(data.projects) && (data.projects.length || data.full_sync || token === '*')) {
+                if (data.full_sync || token === '*') projects = {};
+                data.projects.forEach(p => {
+                    if (!p || !p.id) return;
+                    if (p.is_deleted || p.is_archived) {
+                        delete projects[String(p.id)];
+                        if (p.v2_id) delete projects[p.v2_id];
+                        return;
+                    }
+                    projects[String(p.id)] = p;
+                    if (p.v2_id) projects[p.v2_id] = p; // alias so either ID form resolves
+                });
+                saveCachedProjects();
+                populateFilterSelect();
+            }
+
             if (data.full_sync || token === '*') {
                 // Rebuild store from scratch: only keep active (not completed/deleted) items.
                 itemsById = {};
@@ -2500,57 +2621,21 @@
             }
 
             syncToken = data.sync_token || syncToken;
-            persistItemStore();
+            // Only rewrite the item store when something in it changed. An idle
+            // 45s delta returns no items, and re-serialising every task for it
+            // was the biggest recurring main-thread cost in the app.
+            const itemsChanged = data.full_sync || token === '*' || data.items.length > 0;
+            if (itemsChanged) persistItemStore(); else persistSyncToken();
             _syncSucceededThisRun = true;
             return true;
         }
 
-        async function loadProjects() {
-            try {
-                let allProjects = [];
-                let cursor = null;
-                let hasMore = true;
-                while (hasMore) {
-                    const url = new URL('https://api.todoist.com/api/v1/projects');
-                    url.searchParams.set('limit', '200');
-                    if (cursor) url.searchParams.set('cursor', cursor);
-                    const res = await fetchWithTimeout(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
-                    if (!res.ok) throw new Error('Failed');
-                    const data = await res.json();
-                    if (Array.isArray(data)) {
-                        allProjects = allProjects.concat(data);
-                        hasMore = false;
-                    } else {
-                        allProjects = allProjects.concat(data.results || []);
-                        cursor = data.next_cursor || null;
-                        hasMore = !!cursor;
-                    }
-                }
-                projects = {};
-                allProjects.forEach(p => {
-                    projects[p.id] = p;
-                    if (p.v2_id) projects[p.v2_id] = p; // alias so either ID form resolves
-                });
-                populateFilterSelect();
-                // Sync API may return projects with a different id format than REST.
-                // Alias those too so tasks from /tasks/filter (Sync-style) resolve.
-                try {
-                    const syncRes = await fetchWithTimeout('https://api.todoist.com/api/v1/sync', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-                        body: 'sync_token=*&resource_types=["projects"]'
-                    });
-                    const syncData = await syncRes.json();
-                    syncData.projects?.forEach(sp => {
-                        const target = projects[sp.v2_id] || projects[sp.id];
-                        if (!target) return;
-                        if (sp.id) projects[sp.id] = target;
-                        if (sp.v2_id) projects[sp.v2_id] = target;
-                    });
-                } catch (e) { console.error('project sync alias failed', e); }
-                saveCachedProjects();
-                populateFilterSelect();
-            } catch (e) { console.error(e); }
+        // Projects arrive with the items sync (see _doSync), so "load projects"
+        // is just "make sure a sync has run" plus a re-render of the picker.
+        // Shares the in-flight sync with loadAllTasks() at launch: one request.
+        async function loadProjects(force = false) {
+            await syncNow(force ? { force: true } : undefined);
+            populateFilterSelect();
         }
 
         // Merge the current itemsById store into the session queue:
@@ -2620,6 +2705,16 @@
         // Day rollover: if the persisted session belongs to a previous local
         // calendar day, offer a gentle one-click refresh. Never silently
         // mutates or clears the session — the user stays in control.
+        // Midnight rollover of the stats display: reset the today line and
+        // pomodoro dots when the app runs (or sleeps) across midnight.
+        function checkStatsDayRollover() {
+            if (localDateKey() === _statsDay) return;
+            _statsDay = localDateKey();
+            pomodoroCount = 0;
+            updatePomodoroDots();
+            renderStatsToday();
+        }
+
         let _rolloverPromptedFor = null;
         function checkDayRollover() {
             if (!apiToken || tasks.length === 0 || !sessionDay) return;
@@ -3507,50 +3602,61 @@
             renderSearchResults(matches);
         }
 
+        // Nobody scrolls past this many matches; they narrow the search instead.
+        // Rendering every match on a large account made each keystroke build
+        // hundreds of nodes and listeners.
+        const SEARCH_RESULT_CAP = 150;
+
         function renderSearchResults(results) {
             selectedSearchIndex = -1;
-            searchResults.innerHTML = '';
-            
+
             if (results.length === 0) {
                 searchResults.innerHTML = '<div class="search-empty">No tasks found</div>';
                 return;
             }
-            
-            const sessionIds = new Set(tasks.map(t => t.id));
-            
-            results.forEach(task => {
+
+            const sessionIds = new Set(tasks.map(t => String(t.id)));
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const shown = results.slice(0, SEARCH_RESULT_CAP);
+
+            // One string, one innerHTML write; clicks are delegated below.
+            let html = shown.map(task => {
                 const project = projects[task.project_id];
-                const inSession = sessionIds.has(task.id);
-                const item = document.createElement('div');
-                item.className = `search-result-item${inSession ? ' in-session' : ''}`;
-                
+                const inSession = sessionIds.has(String(task.id));
+
                 let metaText = project ? project.name : 'Inbox';
                 if (task.due) {
                     const dueDate = new Date(task.due.date.slice(0, 10) + 'T00:00:00');
-                    const today = new Date(); today.setHours(0,0,0,0);
                     const diff = Math.floor((dueDate - today) / 86400000);
                     if (diff < 0) metaText += ' · Overdue';
                     else if (diff === 0) metaText += ' · Today';
                     else if (diff === 1) metaText += ' · Tomorrow';
                     else metaText += ` · ${task.due.date}`;
                 }
-                
+
                 const labelsHtml = (task.labels && task.labels.length)
                     ? `<span class="search-result-labels">${task.labels.map(l => `<span class="task-label-pill">${escHtml(l)}</span>`).join('')}</span>`
                     : '';
-                item.innerHTML = `
-                    <span class="search-result-content">${escHtml(task.content)}${labelsHtml}</span>
-                    <span class="search-result-meta">${escHtml(metaText)}</span>
-                    ${inSession ? '<span class="search-result-add" style="color:var(--text-secondary);">✓</span>' : '<span class="search-result-add">+</span>'}
-                `;
-                
-                if (!inSession) {
-                    item.addEventListener('click', () => addTaskToSession(task));
-                }
-                
-                searchResults.appendChild(item);
-            });
+                return `<div class="search-result-item${inSession ? ' in-session' : ''}" data-id="${escHtml(String(task.id))}">`
+                    + `<span class="search-result-content">${escHtml(task.content)}${labelsHtml}</span>`
+                    + `<span class="search-result-meta">${escHtml(metaText)}</span>`
+                    + (inSession ? '<span class="search-result-add" style="color:var(--text-secondary);">✓</span>' : '<span class="search-result-add">+</span>')
+                    + '</div>';
+            }).join('');
+            if (results.length > shown.length) {
+                html += `<div class="search-empty">Showing ${shown.length} of ${results.length} — keep typing to narrow</div>`;
+            }
+            searchResults.innerHTML = html;
         }
+
+        // Delegated: one listener for every result row, present or future.
+        searchResults.addEventListener('click', e => {
+            const item = e.target.closest('.search-result-item');
+            if (!item || item.classList.contains('in-session')) return;
+            const id = item.dataset.id;
+            const task = itemsById[id] || allTasks.find(t => String(t.id) === id);
+            if (task) addTaskToSession(task);
+        });
 
         function addTaskToSession(task) {
             if (tasks.some(t => t.id === task.id)) return;
@@ -3635,7 +3741,7 @@
             longBreakInput.value = longBreakMins;
             cancelSettingsBtn.classList.toggle('hidden', !apiToken);
             showSetupScreen();
-            loadProjects().then(() => { filterSelect.value = selectedFilter; });
+            loadProjects(true).then(() => { filterSelect.value = selectedFilter; });
         });
 
         // Back to tasks without re-validating. Restore the form values from
