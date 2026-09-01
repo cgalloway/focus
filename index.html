@@ -471,6 +471,10 @@
         .header-btn svg { width: 18px; height: 18px; stroke: var(--text-secondary); }
         .task-counter { font-size: 0.9rem; color: var(--text-secondary); }
         .stats-line { margin-top: 0.35rem; font-size: 0.85rem; color: var(--text-secondary); text-align: center; min-height: 1.2em; }
+        /* Sync health. Empty (and collapsed) while everything is fine. */
+        .sync-status { margin-top: 0.2rem; font-size: 0.72rem; color: var(--text-secondary); opacity: 0.85; text-align: center; }
+        .sync-status:empty { display: none; }
+        .sync-status.warn { color: #C77100; opacity: 1; }
         .task-list { flex: 1 1 auto; overflow-y: auto; margin-bottom: 1rem; min-height: 240px; padding-top: 4px; }
         .task-item {
             display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1rem;
@@ -780,7 +784,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 11 · updated August 7, 2026</div>
+                <div class="app-version">Version 12 · updated September 1, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -818,6 +822,7 @@
                         </button>
                     </div>
                     <div class="stats-line" id="statsLine"></div>
+                    <div class="sync-status" id="syncStatus"></div>
                 </div>
                 <div id="taskArea"></div>
                 <div class="task-context-bar" id="taskContextBar">
@@ -994,6 +999,15 @@
         // Local calendar day ('YYYY-MM-DD') the session was last curated for —
         // used by the day-rollover prompt. null until a session is restored/created.
         let sessionDay = null;
+
+        // Every Todoist request goes through here. Without a bound, a request that
+        // never answers (a phone changing networks mid-flight is enough) held the
+        // sync engine's in-flight guard forever and froze every later refresh.
+        function fetchWithTimeout(url, opts = {}, ms = 15000) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), ms);
+            return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+        }
 
         // Local-timezone calendar day key, e.g. '2026-07-01'.
         function localDateKey(d = new Date()) {
@@ -1240,6 +1254,74 @@
             }
             taskTimeLeft = live;
             try { localStorage.setItem('focus_time_left_v1', JSON.stringify(live)); } catch (e) { /* quota */ }
+        }
+
+        // ---- Running-timer checkpoint (focus_timer_v1) ----
+        // iOS can kill the app outright while a countdown is running. The
+        // remainder stash above only knows how much was left when we went to
+        // the background, so a relaunch used to show that stale value, paused,
+        // and the time on task accrued while closed was lost. This records the
+        // wall-clock END of the running stretch: a relaunch resumes at the true
+        // remaining time, or recognises that the timer finished while closed.
+        const LS_TIMER = 'focus_timer_v1';
+        function persistTimerState() {
+            try {
+                if (!timerRunning || !timerEndTime) { localStorage.removeItem(LS_TIMER); return; }
+                const t = currentTask();
+                localStorage.setItem(LS_TIMER, JSON.stringify({
+                    endTime: timerEndTime,
+                    initial: initialTimerSeconds,
+                    onBreak: isOnBreak,
+                    taskId: t ? String(t.id) : null,
+                    elapsedStamp: _elapsedStamp
+                }));
+            } catch (e) { /* quota — best effort */ }
+        }
+        function restoreRunningTimer() {
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem(LS_TIMER) || 'null'); } catch (e) { /* corrupt — ignore */ }
+            try { localStorage.removeItem(LS_TIMER); } catch (e) {}
+            if (!saved || !Number.isFinite(saved.endTime)) return;
+            if (timerRunning || isOnBreak || inOvertime) return;
+            const now = Date.now();
+            const t = currentTask();
+            const curId = t ? String(t.id) : null;
+            // The session moved on underneath us (edited on another device, say):
+            // the stashed remainder already covers whatever task is in focus now.
+            if (!saved.onBreak && (!curId || curId !== saved.taskId)) return;
+            if (saved.onBreak && !pomodoroEnabled) return;
+            const initial = Math.max(1, Math.round(saved.initial || 0));
+            const remaining = Math.round((saved.endTime - now) / 1000);
+            // The countdown kept running while the app was closed — that is real
+            // time on task, credited up to the moment the timer would have ended.
+            if (!saved.onBreak && saved.taskId && Number.isFinite(saved.elapsedStamp)) {
+                const secs = (Math.min(now, saved.endTime) - saved.elapsedStamp) / 1000;
+                if (secs > 0) { taskElapsed[saved.taskId] = (taskElapsed[saved.taskId] || 0) + secs; saveElapsed(); }
+            }
+            timerManuallySet = false;
+            if (remaining > 0) {
+                isOnBreak = !!saved.onBreak;
+                initialTimerSeconds = initial;
+                timerSeconds = Math.min(remaining, initial);
+                startTimer(true); // quiet: no start tick, no permission prompt
+                return;
+            }
+            // It ran out while we were away. Bank what ran, then arm a fresh
+            // countdown for the task, ready to start — without auto-starting a
+            // break or overtime, since nobody was here to see it end. (A timer
+            // left at 0:00 is re-armed by the next render anyway; doing it here
+            // makes the relaunch deterministic.)
+            if (saved.onBreak) {
+                isOnBreak = false;
+            } else {
+                bumpStat('focusSeconds', initial);
+                if (pomodoroEnabled) { pomodoroCount++; bumpStat('pomodoros', 1); }
+                delete taskTimeLeft[saved.taskId]; persistTimeLeft();
+            }
+            const secs = taskWorkSeconds();
+            timerSeconds = secs; initialTimerSeconds = secs;
+            updateTimerDisplay();
+            showToast(saved.onBreak ? 'Break finished while you were away' : 'Timer finished while you were away');
         }
 
         // =====================================================================
@@ -1491,6 +1573,34 @@
             });
         }
 
+        // ---- Sync health line ----------------------------------------------
+        // Under the stats. Empty while everything is fine; speaks up only for a
+        // sustained problem (two failures in a row, offline, or a rejected
+        // token) so a single dropped request never flashes a warning.
+        function renderSyncStatus() {
+            const el = $('syncStatus'); if (!el) return;
+            let msg = '', warn = false;
+            if (apiToken) {
+                const fs = (window.FocusSync && _syncReady) ? FocusSync.status() : null;
+                const now = Date.now();
+                if (_authError || (fs && fs.authError)) {
+                    msg = 'Todoist rejected your API token — open Settings to update it'; warn = true;
+                } else if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
+                    msg = 'Offline — changes are saved on this device';
+                } else {
+                    const until = Math.max(
+                        _syncFailures >= 2 ? _syncBackoffUntil : 0,
+                        (fs && fs.failures >= 2) ? fs.backoffUntil : 0);
+                    if (until > now) msg = `Can't reach Todoist — retrying in ${Math.max(1, Math.round((until - now) / 1000))}s`;
+                }
+            }
+            if (el.textContent !== msg) el.textContent = msg;
+            el.classList.toggle('warn', warn);
+        }
+        setInterval(renderSyncStatus, 5000);
+        window.addEventListener('online', renderSyncStatus);
+        window.addEventListener('offline', renderSyncStatus);
+
         function initSync() {
             // Degrade to a plain single-device app if focus-sync.js didn't load,
             // rather than taking the whole script down with a ReferenceError.
@@ -1728,7 +1838,10 @@
         // Incremental sync engine: persistent item store + delta token.
         let itemsById = {};   // String(item.id) → Sync item object
         let syncToken = null; // null means "no stored token → use *"
-        let _syncInFlight = false; // re-entrancy guard
+        let _syncPromise = null;   // the running syncNow(); concurrent callers share it
+        // Consecutive failures drive an exponential backoff so an outage (or a
+        // revoked token) doesn't turn the polls into a request storm.
+        let _syncFailures = 0, _syncBackoffUntil = 0, _authError = false;
         let _syncSucceededThisRun = false; // true once any sync completes; gates session pruning
         const compactTimer = $('compactTimer'), compactTask = $('compactTask');
         const compactPlayPause = $('compactPlayPause'), compactComplete = $('compactComplete'), compactExpand = $('compactExpand'), compactSkip = $('compactSkip');
@@ -1809,8 +1922,11 @@
                 showFocusScreen();
                 restoreSession();
                 renderCurrentTask();
-                // Relaunch resumes the focused task's parked countdown, if any.
+                // Relaunch resumes the focused task's parked countdown, if any…
                 armTimerForArrival(false, false);
+                // …unless a timer was RUNNING when the app died, in which case the
+                // checkpoint knows the true remaining time and takes over.
+                restoreRunningTimer();
                 updateCompactBar();
                 loadProjects().then(() => {
                     renderCurrentTask();
@@ -1882,8 +1998,10 @@
                 // end time, so it's accurate the moment we re-read it.
                 if (timerRunning) updateTimerDisplay();
                 _lastActivePull = Date.now();
-                FocusSync.sync();
-                syncNow().then(() => {
+                // Coming back to the app is a natural retry point, so this pull
+                // ignores any failure backoff the automated polls are honouring.
+                FocusSync.sync({ force: true });
+                syncNow({ force: true }).then(() => {
                     allTasks = Object.values(itemsById);
                     applyItemsToSession();
                     trySessionRefill();
@@ -1992,16 +2110,18 @@
             pomodoroDots.innerHTML = html;
         }
 
-        function startTimer() {
+        // `quiet` is for resuming a checkpointed timer on relaunch: no start
+        // tick, and no permission prompt (there is no user gesture to attach it to).
+        function startTimer(quiet = false) {
             if (timerSeconds <= 0) return;
             // Lazily ask for notification permission the first time the user starts a timer.
-            if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            if (!quiet && typeof Notification !== 'undefined' && Notification.permission === 'default') {
                 Notification.requestPermission().catch(() => {});
             }
             exitOvertime();
             timerRunning = true;
             flushElapsed(); beginElapsed();
-            playStartTick();
+            if (!quiet) playStartTick();
             // Anchor to a wall-clock end time rather than counting ticks. If a
             // tick is delayed or dropped (background throttling, system sleep),
             // the next tick recomputes the true remaining time and stays accurate.
@@ -2022,6 +2142,7 @@
                 }
             }, 1000);
             updateTimerDisplay();
+            persistTimerState();
             // Book the lock-screen alert now, while we still have a foreground
             // to make the network call from.
             schedulePushForTimer();
@@ -2092,8 +2213,8 @@
 
         // Every path out of a running timer drops the booked alert, so a paused
         // or abandoned session can't fire an alarm on your phone later.
-        function pauseTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
-        function stopTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
+        function pauseTimer() { timerRunning = false; persistTimerState(); clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
+        function stopTimer() { timerRunning = false; persistTimerState(); clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
         function resetTimer() { stopTimer(); exitOvertime(); timerSeconds = initialTimerSeconds; updateTimerDisplay(); }
         function setTimer(minutes, seconds = 0) { stopTimer(); exitOvertime(); timerSeconds = minutes * 60 + seconds; initialTimerSeconds = timerSeconds; updateTimerDisplay(); }
 
@@ -2279,17 +2400,28 @@
         }
 
         // Single entry point for all Todoist item syncs. Uses stored delta token
-        // for incremental updates; falls back to a full sync on error or first run.
-        // Returns true if the item store was refreshed, false on network failure
-        // (or when another sync is already in flight).
-        async function syncNow() {
-            if (_syncInFlight) return false; // don't pile up parallel syncs
-            _syncInFlight = true;
-            try {
-                return await _doSync(syncToken || '*');
-            } finally {
-                _syncInFlight = false;
-            }
+        // for incremental updates; falls back to a full sync on a rejected token
+        // or first run. Returns true if the item store was refreshed, false on
+        // failure. A call that lands while another is running shares that run's
+        // result instead of reporting a phantom failure (the rollover button
+        // used to say "check connection" when the 45s poll merely had the lock).
+        // opts.force skips the failure backoff — for things the user just asked for.
+        function syncNow(opts) {
+            if (_syncPromise) return _syncPromise;
+            const force = !!(opts && opts.force);
+            if (!force && Date.now() < _syncBackoffUntil) return Promise.resolve(false);
+            _syncPromise = _doSync(syncToken || '*').finally(() => { _syncPromise = null; });
+            return _syncPromise;
+        }
+
+        function syncFailed(e, kind) {
+            _syncFailures++;
+            const delay = kind === 'auth'
+                ? 5 * 60000
+                : Math.min(15000 * Math.pow(2, _syncFailures - 1), 5 * 60000);
+            _syncBackoffUntil = Date.now() + delay;
+            console.warn(`syncNow failed (${kind}):`, e && e.message, `— retry in ${Math.round(delay / 1000)}s`);
+            return false;
         }
 
         // The sync engine keeps its state blob in a real Todoist task, which
@@ -2310,17 +2442,33 @@
         async function _doSync(token) {
             let res, data;
             try {
-                res = await fetch('https://api.todoist.com/api/v1/sync', {
+                res = await fetchWithTimeout('https://api.todoist.com/api/v1/sync', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user"]`
-                });
+                }, token === '*' ? 45000 : 15000); // a full sync of a big account is a large download
+            } catch (e) {
+                // Network failure or timeout. Nothing is wrong with our sync token,
+                // so keep it: dropping it here made every outage retry as a FULL
+                // sync — the heaviest possible request at the worst possible time.
+                return syncFailed(e, 'network');
+            }
+            if (res.status === 401 || res.status === 403) {
+                _authError = true;
+                return syncFailed(new Error(`HTTP ${res.status}`), 'auth');
+            }
+            if (res.status === 429 || res.status >= 500) {
+                // Rate-limited or Todoist is having a bad moment: back off, keep the token.
+                return syncFailed(new Error(`HTTP ${res.status}`), 'transient');
+            }
+            try {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 data = await res.json();
                 if (!data || !Array.isArray(data.items)) throw new Error('malformed response');
             } catch (e) {
-                // If we were attempting an incremental sync, drop the token and
-                // retry once with a full sync so stale state can't get stuck.
+                // A 4xx or unreadable body on an incremental sync means the token
+                // itself was rejected (expired, or from a different account): drop
+                // it and retry once with a full sync so stale state can't get stuck.
                 if (token !== '*') {
                     console.warn('syncNow incremental failed, retrying full sync:', e);
                     syncToken = null;
@@ -2328,9 +2476,9 @@
                 }
                 // Full sync also failed — leave existing store intact, app stays
                 // usable; report the failure so callers can react (e.g. rollover).
-                console.error('syncNow full sync failed:', e);
-                return false;
+                return syncFailed(e, 'transient');
             }
+            _syncFailures = 0; _syncBackoffUntil = 0; _authError = false;
 
             if (data.user?.id) currentUserId = String(data.user.id);
 
@@ -2366,7 +2514,7 @@
                     const url = new URL('https://api.todoist.com/api/v1/projects');
                     url.searchParams.set('limit', '200');
                     if (cursor) url.searchParams.set('cursor', cursor);
-                    const res = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
+                    const res = await fetchWithTimeout(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
                     if (!res.ok) throw new Error('Failed');
                     const data = await res.json();
                     if (Array.isArray(data)) {
@@ -2387,7 +2535,7 @@
                 // Sync API may return projects with a different id format than REST.
                 // Alias those too so tasks from /tasks/filter (Sync-style) resolve.
                 try {
-                    const syncRes = await fetch('https://api.todoist.com/api/v1/sync', {
+                    const syncRes = await fetchWithTimeout('https://api.todoist.com/api/v1/sync', {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: 'sync_token=*&resource_types=["projects"]'
@@ -2459,7 +2607,7 @@
             const originalText = refreshBtn.innerHTML;
             refreshBtn.innerHTML = 'Refreshing…';
             try {
-                await syncNow();
+                await syncNow({ force: true }); // the user asked — ignore any backoff
                 allTasks = Object.values(itemsById);
                 applyItemsToSession();
                 persistSession();
@@ -2501,7 +2649,7 @@
             const originalText = loadTodayBtn.textContent;
             loadTodayBtn.textContent = 'Loading…';
             try {
-                if (allTasks.length === 0) await loadAllTasks();
+                if (allTasks.length === 0) await loadAllTasks(true);
                 const todayTasks = allTasks
                     .filter(t => isTodayOrOverdue(t) && (!t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId))
                     .sort(todayViewOrder);
@@ -2531,7 +2679,7 @@
         // null if no saved filter matches.
         async function getSavedFilterQuery(nameNeedle) {
             const needle = nameNeedle.toLowerCase();
-            const res = await fetch('https://api.todoist.com/api/v1/sync', {
+            const res = await fetchWithTimeout('https://api.todoist.com/api/v1/sync', {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: 'sync_token=*&resource_types=["filters"]'
@@ -2552,7 +2700,7 @@
                 url.searchParams.set('query', query);
                 url.searchParams.set('limit', '200');
                 if (cursor) url.searchParams.set('cursor', cursor);
-                const res = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
+                const res = await fetchWithTimeout(url.toString(), { headers: { 'Authorization': `Bearer ${apiToken}` } });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 if (Array.isArray(data)) { results = results.concat(data); hasMore = false; }
@@ -2697,7 +2845,7 @@
             taskArea.innerHTML = `<div class="task-block" id="taskBlock"><div class="task-block-row"><span class="task-project-dot" style="background:${dotColor}" title="${escHtml(projName)}"></span><a class="task-content" id="taskLink" title="${escHtml(projName)} — open in Todoist">${escHtml(task.content)}</a></div>${dueText ? `<div class="task-due ${dueClass}">${dueText}</div>` : ''}${durHtml}<div>${goalChipHtml(task)}</div></div>`;
             $('taskLink').addEventListener('click', (e) => { e.preventDefault(); openTaskInTodoist(task.v2_id, task.id); });
             // Keep time-on-task accruing against whatever task is now showing.
-            if ((timerRunning || inOvertime) && _elapsedTaskId !== String(task.id)) { flushElapsed(); beginElapsed(); }
+            if ((timerRunning || inOvertime) && _elapsedTaskId !== String(task.id)) { flushElapsed(); beginElapsed(); persistTimerState(); }
             updateCompactBar();
             applyTaskDurationIfIdle();
         }
@@ -2965,10 +3113,13 @@
 
             // Fire the network call in the background — re-insert on failure.
             try {
-                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
+                // Bounded: a hung close used to leave the task in limbo for as long
+                // as the browser cared to wait. If it timed out but Todoist did
+                // close it, the next item sync removes it again — nothing is lost.
+                const res = await fetchWithTimeout(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${apiToken}` }
-                });
+                }, 12000);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 // Log only after Todoist confirms the close — the rollback path
                 // below then never needs to decrement anything.
@@ -3029,10 +3180,13 @@
             updateCompactBar();
 
             try {
-                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
+                // Bounded: a hung close used to leave the task in limbo for as long
+                // as the browser cared to wait. If it timed out but Todoist did
+                // close it, the next item sync removes it again — nothing is lost.
+                const res = await fetchWithTimeout(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${apiToken}` }
-                });
+                }, 12000);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 bumpStat('tasksCompleted', 1);
                 clearTaskTracking(task.id);
@@ -3311,10 +3465,10 @@
             }
         });
 
-        async function loadAllTasks() {
+        async function loadAllTasks(force = false) {
             // Sync API returns items with all fields (v2_id, day_order, responsible_uid,
             // etc.) — no separate REST pagination loop or decoration pass needed.
-            await syncNow();
+            await syncNow(force ? { force: true } : undefined);
             allTasks = Object.values(itemsById);
         }
 
@@ -3419,7 +3573,7 @@
             const token = apiTokenInput.value.trim(); if (!token) { alert('Please enter your API token'); return; }
             connectBtn.disabled = true; connectBtn.textContent = 'Connecting...';
             try {
-                const res = await fetch('https://api.todoist.com/api/v1/projects', { headers: { 'Authorization': `Bearer ${token}` } });
+                const res = await fetchWithTimeout('https://api.todoist.com/api/v1/projects', { headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.status === 401 || res.status === 403) {
                     alert('Invalid API token. Please check your token and try again.');
                     return;
@@ -3429,6 +3583,9 @@
                     return;
                 }
                 apiToken = token; selectedFilter = filterSelect.value;
+                // A freshly validated token clears any auth failure / backoff state.
+                _authError = false; _syncFailures = 0; _syncBackoffUntil = 0;
+                if (window.FocusSync && _syncReady) FocusSync.resetBackoff();
                 if (focusBridge) { await focusBridge.setToken(apiToken); } else { localStorage.setItem('todoist_api_token', apiToken); }
                 localStorage.setItem('todoist_filter', selectedFilter);
                 // Save pomodoro settings
@@ -3572,10 +3729,10 @@
             if (allTasks.length > 0) {
                 // Show cached results immediately, refresh in background
                 searchTasks('');
-                loadAllTasks().then(() => searchTasks(taskSearchInput.value));
+                loadAllTasks(true).then(() => searchTasks(taskSearchInput.value));
             } else {
                 searchResults.innerHTML = '<div class="search-loading">Loading tasks…</div>';
-                loadAllTasks().then(() => searchTasks(''));
+                loadAllTasks(true).then(() => searchTasks(''));
             }
         });
         // Done button — bind both click and pointerup. Native click can be
@@ -3636,7 +3793,7 @@
         });
         $('rolloverLoadBtn').addEventListener('click', async () => {
             $('rolloverPrompt').classList.remove('visible');
-            const synced = await syncNow(); // false when the network fetch failed
+            const synced = await syncNow({ force: true }); // false when the network fetch failed
             if (!synced) {
                 // Offline / sync failure: leave sessionDay stale and re-arm the
                 // prompt so it can offer again once we're back online.
@@ -3664,8 +3821,8 @@
             if (Date.now() - _lastActivePull < 10000) return;
             _lastActivePull = Date.now();
             if (timerRunning) updateTimerDisplay();
-            FocusSync.sync();
-            syncNow().then(() => {
+            FocusSync.sync({ force: true });
+            syncNow({ force: true }).then(() => {
                 allTasks = Object.values(itemsById);
                 applyItemsToSession();
                 trySessionRefill();
