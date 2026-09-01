@@ -39,14 +39,23 @@
   var LS_DEVICE = 'focus_device_id_v1';
   var LS_CACHE = 'focus_sync_cache_v1'; // last known remote blob, for offline reads
 
+  var FETCH_TIMEOUT_MS = 15000; // a hung request must never wedge the engine
+  var FLUSH_REUSE_MS = 20000;   // flush() may skip the read if one landed this recently
+  var BACKOFF_BASE_MS = 15000;  // first retry delay after a failure; doubles each time
+  var BACKOFF_MAX_MS = 5 * 60000;
+
   var cfg = null;      // { getToken, getLocalState, onRemote, log }
   var ids = null;      // { projectId, taskId }
   var deviceId = null;
   var remote = emptyBlob();
   var pushTimer = null;
   var pushDeadline = 0;  // wall-clock ms the pending pushTimer fires at
-  var inFlight = false;
+  var inFlightPromise = null; // the running sync(); concurrent callers share it
+  var rerunOpts = null;       // a call that arrived mid-flight — run once more after
   var lastPushedJSON = '';
+  var lastReadAt = 0;         // when readRemote() last returned
+  var failures = 0;           // consecutive sync failures, drives the backoff
+  var backoffUntil = 0;       // no automatic sync before this wall-clock ms
 
   // ---- small helpers -------------------------------------------------------
 
@@ -137,18 +146,40 @@
 
   // ---- Todoist plumbing ----------------------------------------------------
 
+  // Every request is bounded: a request that never answers (common on a phone
+  // right after a network switch) used to leave inFlight set forever and block
+  // all later syncs. Errors carry `status` so sync() can tell a revoked token
+  // (stop and tell the user) from a blip (back off and retry).
   async function api(path, opts) {
     var token = await cfg.getToken();
     if (!token) throw new Error('no token');
     opts = opts || {};
     var headers = { 'Authorization': 'Bearer ' + token };
     if (opts.body) headers['Content-Type'] = 'application/json';
-    var res = await fetch(API + path, {
-      method: opts.method || 'GET',
-      headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status + ' on ' + path);
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS) : null;
+    var res;
+    try {
+      res = await fetch(API + path, {
+        method: opts.method || 'GET',
+        headers: headers,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        // keepalive lets the final write on backgrounding outlive the page.
+        keepalive: !!opts.keepalive,
+        signal: ctrl ? ctrl.signal : undefined
+      });
+    } catch (e) {
+      var err = new Error((e && e.name === 'AbortError' ? 'timeout' : 'network error') + ' on ' + path);
+      err.status = 0;
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (!res.ok) {
+      var httpErr = new Error('HTTP ' + res.status + ' on ' + path);
+      httpErr.status = res.status;
+      throw httpErr;
+    }
     if (res.status === 204) return null;
     return res.json();
   }
@@ -220,11 +251,27 @@
         task = await api('/tasks/' + s.taskId);
       } else throw e;
     }
-    var blob = await decode(task && task.description);
-    return blob || emptyBlob();
+    var text = task && task.description ? String(task.description).trim() : '';
+    // An empty description means the store was wiped by hand; there is nothing
+    // left to protect, so seeding it from this device is the right recovery.
+    // Forget what we last pushed, or the "unchanged, skip the write" shortcut
+    // would leave the store empty until something local happened to change.
+    if (!text) { lastPushedJSON = ''; return emptyBlob(); }
+    var blob = await decode(text);
+    if (!blob) {
+      // NON-empty but undecodable: a newer format from another device, or a
+      // transient decode failure. Writing here would replace every other
+      // device's buckets with this device's alone — so refuse, and leave the
+      // remote untouched until it can be read. (Deleting the focus-state task
+      // in Todoist resets the store if it really is garbage.)
+      var err = new Error('remote state could not be decoded — not overwriting it');
+      err.status = -1;
+      throw err;
+    }
+    return blob;
   }
 
-  async function writeRemote(blob) {
+  async function writeRemote(blob, opts) {
     var s = await ensureStore();
     var desc = await encode(blob);
     if (desc.length > DESC_LIMIT) {
@@ -235,7 +282,11 @@
         return false;
       }
     }
-    await api('/tasks/' + s.taskId, { method: 'POST', body: { description: desc } });
+    await api('/tasks/' + s.taskId, {
+      method: 'POST',
+      body: { description: desc },
+      keepalive: !!(opts && opts.keepalive)
+    });
     return true;
   }
 
@@ -304,6 +355,60 @@
     return blob;
   }
 
+  // ---- the sync pass ---------------------------------------------------------
+
+  function noteFailure(e) {
+    var status = e && typeof e.status === 'number' ? e.status : 0;
+    Sync.lastError = e && e.message ? e.message : String(e);
+    if (status === 401 || status === 403) {
+      // Revoked or replaced token: nothing will work until the user fixes it,
+      // so stop the polls hammering Todoist and let the UI say why.
+      Sync.authError = true;
+      failures = Math.max(failures, 1);
+      backoffUntil = Date.now() + BACKOFF_MAX_MS;
+    } else {
+      failures++;
+      backoffUntil = Date.now() + Math.min(BACKOFF_BASE_MS * Math.pow(2, failures - 1), BACKOFF_MAX_MS);
+    }
+    log('focus-sync: sync failed —', Sync.lastError, '(retry in ' + Math.round((backoffUntil - Date.now()) / 1000) + 's)');
+  }
+
+  async function runSync(opts) {
+    try {
+      var local = cfg.getLocalState();
+      var blob;
+      // On flush the page has at most a second of life left. Two round trips
+      // will not fit, so build on the read we already have when it is fresh.
+      var reuse = opts.flush && lastReadAt && (Date.now() - lastReadAt) < FLUSH_REUSE_MS && remote && remote.v;
+      if (reuse) {
+        blob = remote;
+      } else {
+        blob = await readRemote();
+        lastReadAt = Date.now();
+      }
+      blob = mergeLocalInto(blob, local);
+
+      var json = JSON.stringify(blob);
+      if (json !== lastPushedJSON) {
+        var ok = await writeRemote(blob, { keepalive: !!opts.flush });
+        if (ok) lastPushedJSON = json;
+      }
+
+      remote = blob;
+      try { localStorage.setItem(LS_CACHE, json); } catch (e) {}
+      Sync.lastError = null;
+      Sync.authError = false;
+      failures = 0;
+      backoffUntil = 0;
+      Sync.lastSyncAt = Date.now();
+      if (cfg.onRemote) cfg.onRemote(blob);
+      return true;
+    } catch (e) {
+      noteFailure(e);
+      return false;
+    }
+  }
+
   // ---- public API ----------------------------------------------------------
 
   var Sync = {
@@ -359,6 +464,19 @@
 
     lastError: null,
     lastSyncAt: 0,
+    authError: false,   // Todoist rejected the token; polling is paused
+
+    /** Health snapshot for the UI. */
+    status: function () {
+      return {
+        error: Sync.lastError,
+        lastSyncAt: Sync.lastSyncAt,
+        failures: failures,
+        backoffUntil: backoffUntil,
+        authError: Sync.authError,
+        inFlight: !!inFlightPromise
+      };
+    },
 
     init: function (options) {
       cfg = options;
@@ -370,35 +488,32 @@
       return this;
     },
 
-    /** Read-merge-write. Safe to call often; collapses concurrent callers. */
-    sync: async function () {
-      if (inFlight) return false;
-      if (!cfg) return false;
-      inFlight = true;
-      try {
-        var local = cfg.getLocalState();
-        var blob = await readRemote();
-        blob = mergeLocalInto(blob, local);
-
-        var json = JSON.stringify(blob);
-        if (json !== lastPushedJSON) {
-          var ok = await writeRemote(blob);
-          if (ok) lastPushedJSON = json;
-        }
-
-        remote = blob;
-        try { localStorage.setItem(LS_CACHE, json); } catch (e) {}
-        Sync.lastError = null;
-        Sync.lastSyncAt = Date.now();
-        if (cfg.onRemote) cfg.onRemote(blob);
-        return true;
-      } catch (e) {
-        Sync.lastError = e && e.message ? e.message : String(e);
-        log('focus-sync: sync failed —', Sync.lastError);
-        return false;
-      } finally {
-        inFlight = false;
+    /**
+     * Read-merge-write. Safe to call often. A call that lands while another
+     * is running shares that run's promise AND queues one more pass, so a
+     * change made mid-flight is never silently dropped until the next poll.
+     *
+     * opts.force — ignore the failure backoff (user-initiated actions).
+     * opts.flush — the page is going away: reuse a recent read instead of
+     *              doing a new one, and send the write with keepalive so it
+     *              can outlive the page. Implies force.
+     */
+    sync: function (opts) {
+      opts = opts || {};
+      if (!cfg) return Promise.resolve(false);
+      if (inFlightPromise) {
+        // Keep the strongest request: a flush must not be downgraded.
+        if (!rerunOpts || opts.flush) rerunOpts = { force: !!opts.force || !!opts.flush, flush: !!opts.flush };
+        return inFlightPromise;
       }
+      if (!opts.force && !opts.flush && Date.now() < backoffUntil) return Promise.resolve(false);
+
+      inFlightPromise = runSync(opts).then(function (ok) {
+        inFlightPromise = null;
+        if (rerunOpts) { var next = rerunOpts; rerunOpts = null; Sync.sync(next); }
+        return ok;
+      });
+      return inFlightPromise;
     },
 
     /** Coalesce bursts of local changes into one network write. The earliest
@@ -412,11 +527,20 @@
       pushTimer = setTimeout(function () { pushDeadline = 0; Sync.sync(); }, Math.max(0, fireAt - Date.now()));
     },
 
-    /** Fire immediately, e.g. when the app is being backgrounded. */
+    /** Fire immediately because the app is being backgrounded. Reuses a fresh
+     *  read and sends the write with keepalive — see sync(). */
     flush: function () {
       clearTimeout(pushTimer);
       pushDeadline = 0;
-      return Sync.sync();
+      return Sync.sync({ flush: true });
+    },
+
+    /** The user just saved a token: forget any failure state and try again. */
+    resetBackoff: function () {
+      failures = 0;
+      backoffUntil = 0;
+      Sync.authError = false;
+      Sync.lastError = null;
     }
   };
 

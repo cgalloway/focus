@@ -98,7 +98,10 @@ function createWindow() {
   // (e.g. Cmd+R with no network) fall back the same way.
   win.loadURL(APP_URL).catch(() => win.loadFile(LOCAL_FALLBACK));
   win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
-    if (isMainFrame) win.loadFile(LOCAL_FALLBACK).catch(() => {});
+    // -3 is ERR_ABORTED: the page itself cancelled the navigation (a redirect,
+    // a reload racing a load). It is not a failure and must not swap the live
+    // app for the offline copy.
+    if (isMainFrame && code !== -3) win.loadFile(LOCAL_FALLBACK).catch(() => {});
   });
 
   // Any link the page didn't route through openExternal still opens in the

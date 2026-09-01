@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 // Keep in lockstep with the visible "Version N" line in index.html's settings.
-const CACHE_VERSION = 'focus-v11';
+const CACHE_VERSION = 'focus-v12';
 const SHELL_CACHE = CACHE_VERSION + '-shell';
 const ASSET_CACHE = CACHE_VERSION + '-assets';
 
@@ -102,6 +102,44 @@ self.addEventListener('notificationclick', event => {
   })());
 });
 
+// How long a launch waits on the network before serving the cached shell. Long
+// enough that a normal launch still picks up a fresh deploy; short enough that
+// a weak signal never leaves the user staring at a blank screen. (Plain
+// network-first had no bound — a stalled request could take tens of seconds
+// to fail before the cache was consulted.) The network fetch keeps running
+// past the deadline and refreshes the cache for next time.
+const SHELL_NETWORK_TIMEOUT_MS = 2500;
+
+async function shellResponse(event, req) {
+  const cache = await caches.open(SHELL_CACHE);
+  const cached = await cache.match(req);
+  const network = fetch(req).then(res => {
+    if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+    return res;
+  });
+  // Keep the worker alive until the background refresh has landed in cache.
+  event.waitUntil(network.catch(() => {}));
+
+  if (cached) {
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), SHELL_NETWORK_TIMEOUT_MS));
+    const fresh = await Promise.race([network.catch(() => null), timeout]);
+    return (fresh && fresh.ok) ? fresh : cached;
+  }
+  try {
+    return await network;
+  } catch (e) {
+    // Nothing cached for this exact URL (e.g. "./?intent=next" from a
+    // notification tap): a navigation can still boot from the shell page.
+    // Anything else (a script, an icon) must fail honestly rather than be
+    // answered with HTML.
+    if (req.mode === 'navigate') {
+      const shell = await cache.match('./index.html');
+      if (shell) return shell;
+    }
+    return Response.error();
+  }
+}
+
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -113,21 +151,10 @@ self.addEventListener('fetch', event => {
 
   const isSameOrigin = url.origin === self.location.origin;
 
-  // App shell: network-first so a redeploy is picked up on the next launch,
-  // falling back to cache when offline. (Cache-first would strand the user on
-  // an old build until the cache version changed.)
+  // App shell: network-first with a deadline, so a redeploy is picked up on
+  // the next launch but a slow network falls back to the cached build fast.
   if (isSameOrigin) {
-    event.respondWith(
-      fetch(req)
-        .then(res => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(SHELL_CACHE).then(c => c.put(req, copy)).catch(() => {});
-          }
-          return res;
-        })
-        .catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
-    );
+    event.respondWith(shellResponse(event, req));
     return;
   }
 
@@ -140,7 +167,7 @@ self.addEventListener('fetch', event => {
         const copy = res.clone();
         caches.open(ASSET_CACHE).then(c => c.put(req, copy)).catch(() => {});
         return res;
-      }).catch(() => hit);
+      }).catch(() => Response.error());
     })
   );
 });

@@ -1,0 +1,33 @@
+# Runs the unit tests (sync engine, service worker) and the headless-browser
+# smoke test on every pull request and on pushes to main. The app has no build
+# step; this is purely a safety net for the sync and timer logic.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'desktop/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Install Chromium for the smoke test
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke test
+        run: npm run test:browser

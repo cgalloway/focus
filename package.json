@@ -1,0 +1,13 @@
+{
+  "name": "focus",
+  "private": true,
+  "description": "Focus — Todoist focus timer (web/iOS PWA, plus the macOS shell in desktop/). This manifest exists only for the tests; the app itself is static files with no build step.",
+  "scripts": {
+    "test": "node test/sync.test.js && node test/sw.test.js",
+    "test:browser": "node test/smoke.test.js",
+    "test:all": "npm test && npm run test:browser"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  }
+}
