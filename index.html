@@ -784,7 +784,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 12 · updated September 1, 2026</div>
+                <div class="app-version">Version 13 · updated September 1, 2026</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -3851,6 +3851,14 @@
             // discard a selection the user just made in the list.
             const clamped = Math.min(Math.max(0, currentIndex), Math.max(0, tasks.length - 1));
             if (clamped !== currentIndex) currentIndex = clamped;
+            // Leaving the list lands on the top of it: the list was just curated,
+            // and the first task is where the work starts. A running countdown
+            // (or overtime) is the one exception — that means the user is mid-task
+            // and only popped in to adjust the list, so focus stays put.
+            if (tasks.length > 1 && currentIndex !== 0 && !timerRunning && !inOvertime) {
+                switchFocusedTask(0); // parks the departing task's clock, arms the first task's
+                return;
+            }
             persistSession();
             renderCurrentTask();
             updateCompactBar();
