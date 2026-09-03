@@ -226,6 +226,31 @@ const base = {
       await ctx.close();
     }
 
+    // I. Closing Manage Tasks lands on the first task — unless a timer is running.
+    {
+      const T2 = { ...TASK, id: '9002', content: 'Second' }, T3 = { ...TASK, id: '9003', content: 'Third' };
+      const { ctx, page } = await boot(browser, {
+        localStorage: { ...base, focus_session: JSON.stringify({ tasks: [TASK, T2, T3], currentIndex: 2, day: new Date().toISOString().slice(0, 10) }) },
+        items: [TASK, T2, T3]
+      });
+      assert.strictEqual(await page.evaluate(() => currentIndex), 2, 'starts focused on the third task');
+      await page.click('#reorderBtn');
+      await page.click('#closeTaskOrder');
+      await page.waitForTimeout(100);
+      assert.strictEqual(await page.evaluate(() => currentIndex), 0, 'idle timer: closing the list jumps to the first task');
+      assert.match(await page.textContent('#taskCounter'), /^1 of 3/);
+      // Now focus the third task again, start its timer, and repeat: focus must stay.
+      await page.evaluate(() => switchFocusedTask(2));
+      await page.click('#timerStartBtn');
+      assert.strictEqual(await page.evaluate(() => timerRunning), true);
+      await page.click('#reorderBtn');
+      await page.click('#closeTaskOrder');
+      await page.waitForTimeout(100);
+      assert.strictEqual(await page.evaluate(() => currentIndex), 2, 'running timer: closing the list keeps the current task');
+      assert.strictEqual(await page.evaluate(() => timerRunning), true, 'and the timer is still running');
+      await ctx.close();
+    }
+
     console.log('all smoke tests passed');
   } finally {
     await browser.close();
