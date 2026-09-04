@@ -1,27 +1,11 @@
-/* ---------------------------------------------------------------------------
- * main.js — Electron shell for Focus.
- *
- * THE UPDATE MODEL is the whole point of this shell: the window loads the
- * DEPLOYED web app (the same URL the iPhone uses), so every fix pushed to the
- * repo reaches the desktop on the next launch with no rebuild. The copies in
- * app/ (refreshed by copy-app.js on every start/dist) are only the offline
- * fallback. Build the DMG once; after that, updates arrive on their own.
- *
- * The page detects Electron by the presence of window.focusAPI (see
- * preload.js) and expects exactly five things from this process:
- *   getToken/setToken  — Todoist token in safeStorage, never in localStorage
- *   toggleCompact      — resize the native window into a floating timer pill
- *   showConfetti       — click-through fullscreen confetti overlay
- *   openExternal       — hand todoist:// and https:// links to the OS
- * ------------------------------------------------------------------------- */
-
-const { app, BrowserWindow, ipcMain, shell, safeStorage, screen, Menu } = require('electron');
+// Bundled UI at the original origin preserves existing user data.
+const { app, BrowserWindow, ipcMain, shell, safeStorage, screen, Menu, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 
 // The deployed web app — must match the URL the iPhone build is served from.
 const APP_URL = 'https://cgalloway.github.io/focus/';
-const LOCAL_FALLBACK = path.join(__dirname, 'app', 'index.html');
 
 const NORMAL = { width: 460, height: 740, minWidth: 380, minHeight: 600 };
 const COMPACT = { width: 380, height: 64 };
@@ -74,6 +58,8 @@ function writeToken(token) {
 // ---- Windows ----------------------------------------------------------------
 
 function createWindow() {
+  isCompactMode = false;
+  normalBounds = null;
   win = new BrowserWindow({
     width: NORMAL.width,
     height: NORMAL.height,
@@ -94,17 +80,15 @@ function createWindow() {
     }
   });
 
-  // Remote-first, local when offline. Later in-page navigation failures
-  // (e.g. Cmd+R with no network) fall back the same way.
-  win.loadURL(APP_URL).catch(() => win.loadFile(LOCAL_FALLBACK));
-  win.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
-    if (isMainFrame) win.loadFile(LOCAL_FALLBACK).catch(() => {});
+  win.loadURL(APP_URL).catch(err => console.error('Focus load failed', err));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAppPage(url)) { event.preventDefault(); openExternal(url); }
   });
 
   // Any link the page didn't route through openExternal still opens in the
   // browser, never in a new Electron window.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^(https?|todoist):/.test(url)) shell.openExternal(url);
+    openExternal(url);
     return { action: 'deny' };
   });
 
@@ -119,20 +103,35 @@ function createWindow() {
   win.on('resize', rememberCompactBounds);
   win.on('move', rememberCompactBounds);
 
-  win.on('closed', () => { win = null; });
+  win.on('close', () => { clearTimeout(saveTimer); saveWindowState(); });
+  win.on('closed', () => { win = null; isCompactMode = false; });
 }
 
 // ---- IPC: the focusAPI surface ---------------------------------------------
 
-ipcMain.handle('focus:get-token', () => readToken());
-ipcMain.handle('focus:set-token', (e, token) => writeToken(token));
+function isAppPage(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === new URL(APP_URL).origin && ['/focus/', '/focus/index.html'].includes(url.pathname);
+  } catch { return false; }
+}
+function openExternal(url) {
+  if (typeof url === 'string' && /^(https?|todoist):/.test(url)) {
+    shell.openExternal(url).catch(err => console.error('Cannot open link', err.message));
+  }
+}
+function handle(channel, callback) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !isAppPage(event.senderFrame.url)) throw new Error('Untrusted Focus request');
+    return callback(event, ...args);
+  });
+}
+handle('focus:get-token', () => readToken());
+handle('focus:set-token', (e, token) => typeof token === 'string' && writeToken(token));
+handle('focus:open-external', (e, url) => openExternal(url));
 
-ipcMain.handle('focus:open-external', (e, url) => {
-  if (typeof url === 'string' && /^(https?|todoist):/.test(url)) shell.openExternal(url);
-});
-
-ipcMain.handle('focus:toggle-compact', (e, isCompact) => {
-  if (!win) return;
+handle('focus:toggle-compact', (e, isCompact) => {
+  if (!win || isCompactMode === !!isCompact) return;
   isCompactMode = !!isCompact;
   if (isCompact) {
     normalBounds = win.getBounds();
@@ -155,7 +154,7 @@ ipcMain.handle('focus:toggle-compact', (e, isCompact) => {
   }
 });
 
-ipcMain.handle('focus:show-confetti', () => {
+handle('focus:show-confetti', () => {
   if (overlayWin) return; // one celebration at a time
   const display = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   overlayWin = new BrowserWindow({
@@ -187,6 +186,15 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    const bundled = new Set(['index.html', 'focus-sync.js', 'focus-push.js', 'confetti.browser.min.js']);
+    protocol.handle('https', request => {
+      const url = new URL(request.url);
+      if (url.origin === new URL(APP_URL).origin && url.pathname.startsWith('/focus/')) {
+        const file = url.pathname.slice('/focus/'.length) || 'index.html';
+        if (bundled.has(file)) return net.fetch(pathToFileURL(path.join(__dirname, 'app', file)).href);
+      }
+      return net.fetch(request, { bypassCustomProtocolHandlers: true });
+    });
     loadWindowState();
     // Standard Edit/Window menus so copy, paste and Cmd+W behave natively.
     Menu.setApplicationMenu(Menu.buildFromTemplate([

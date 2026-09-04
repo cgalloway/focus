@@ -1638,7 +1638,7 @@
         }
 
         const $ = id => document.getElementById(id);
-        const escHtml = t => { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; };
+        const escHtml = t => String(t ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
         // Celebrate clearing the last task. Electron spawns a click-through
         // overlay window for this; on web we draw into a fixed canvas instead.
@@ -1687,7 +1687,11 @@
             return TODOIST_COLORS[project.color] || 'var(--accent)';
         }
         const wrapDigits = str => Array.from(String(str)).map(c => `<span class="digit">${c}</span>`).join('');
+        const timerTextCache = new WeakMap();
         function setTimerText(el, secs, prefix = '') {
+            const key = `${prefix}:${secs}`;
+            if (timerTextCache.get(el) === key) return;
+            timerTextCache.set(el, key);
             const m = Math.floor(secs / 60);
             const s = String(secs % 60).padStart(2, '0');
             const pre = prefix ? `<span class="digit">${prefix}</span>` : '';
@@ -1832,8 +1836,8 @@
         // session. Only re-renders the Manage Tasks list when no drag is active
         // so we don't interrupt the user mid-reorder.
         setInterval(async () => {
-            if (!apiToken) return;
-            await syncNow();
+            if (!apiToken || document.visibilityState !== 'visible') return;
+            if (!await syncNow()) return;
             allTasks = Object.values(itemsById);
             applyItemsToSession();
             trySessionRefill(); // restore remote-session tasks whose bodies just arrived
@@ -2313,7 +2317,8 @@
                 res = await fetch('https://api.todoist.com/api/v1/sync', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user"]`
+                    body: `sync_token=${encodeURIComponent(token)}&resource_types=["items","user"]`,
+                    signal: AbortSignal.timeout(20000)
                 });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 data = await res.json();

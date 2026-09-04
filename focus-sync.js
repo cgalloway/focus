@@ -46,7 +46,7 @@
   var pushTimer = null;
   var pushDeadline = 0;  // wall-clock ms the pending pushTimer fires at
   var inFlight = false;
-  var lastPushedJSON = '';
+  var pendingSync = false;
 
   // ---- small helpers -------------------------------------------------------
 
@@ -146,7 +146,8 @@
     var res = await fetch(API + path, {
       method: opts.method || 'GET',
       headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: AbortSignal.timeout(20000)
     });
     if (!res.ok) throw new Error('HTTP ' + res.status + ' on ' + path);
     if (res.status === 204) return null;
@@ -372,18 +373,20 @@
 
     /** Read-merge-write. Safe to call often; collapses concurrent callers. */
     sync: async function () {
-      if (inFlight) return false;
+      if (inFlight) { pendingSync = true; return false; }
       if (!cfg) return false;
       inFlight = true;
       try {
-        var local = cfg.getLocalState();
         var blob = await readRemote();
+        var remoteJSON = JSON.stringify(blob);
+        var local = cfg.getLocalState();
         blob = mergeLocalInto(blob, local);
 
         var json = JSON.stringify(blob);
-        if (json !== lastPushedJSON) {
+        if (json !== remoteJSON) {
           var ok = await writeRemote(blob);
-          if (ok) lastPushedJSON = json;
+          if (!ok) throw new Error('Sync state is too large to upload');
+          json = JSON.stringify(blob);
         }
 
         remote = blob;
@@ -398,6 +401,7 @@
         return false;
       } finally {
         inFlight = false;
+        if (pendingSync) { pendingSync = false; Sync.schedule(0); }
       }
     },
 
