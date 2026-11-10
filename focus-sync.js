@@ -401,6 +401,7 @@
         return false;
       } finally {
         inFlight = false;
+        if (typeof window !== 'undefined' && window.refreshWorkspace) window.refreshWorkspace();
         if (pendingSync) { pendingSync = false; Sync.schedule(0); }
       }
     },

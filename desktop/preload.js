@@ -10,9 +10,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('focusAPI', {
+  getVersion: () => ipcRenderer.invoke('focus:get-version'),
   getToken: () => ipcRenderer.invoke('focus:get-token'),
   setToken: (token) => ipcRenderer.invoke('focus:set-token', token),
-  toggleCompact: (isCompact) => ipcRenderer.invoke('focus:toggle-compact', !!isCompact),
+  toggleCompact: (isCompact, layout) => ipcRenderer.invoke('focus:toggle-compact', !!isCompact, layout),
+  fitCompactContent: (width, height) => ipcRenderer.invoke('focus:fit-compact-content', width, height),
+  compactMenu: (options) => ipcRenderer.invoke('focus:compact-menu', options),
+  setCompactLayout: (layout) => ipcRenderer.invoke('focus:set-compact-layout', layout),
   showConfetti: () => ipcRenderer.invoke('focus:show-confetti'),
   openExternal: (url) => ipcRenderer.invoke('focus:open-external', url)
 });

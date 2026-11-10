@@ -1,0 +1,36 @@
+/* Fixed-size controls and flexible task text keep the pill readable. */
+.compact-mode .compact-bar {position:relative;gap:10px;padding:0 14px 0 8px;font-size:14px;overflow:hidden; -webkit-app-region:no-drag;}
+.compact-mode .compact-grip {flex:0 0 16px;color:var(--text-secondary);cursor:grab;-webkit-app-region:drag;font-size:20px;text-align:center;}
+.compact-time-group {flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:76px;}
+.compact-mode .compact-timer {font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:24px;font-weight:600;line-height:1.15;min-width:0;white-space:nowrap;}
+.compact-status {font-size:10px;line-height:14px;letter-spacing:.03em;color:var(--text-secondary);}
+.compact-mode .compact-play-wrap {width:32px;height:32px;}
+.compact-mode .compact-btn,.compact-mode .compact-play-wrap .compact-btn.play-pause {width:32px;height:32px;min-width:32px;}
+.compact-mode .compact-btn svg {width:16px;height:16px;}
+.compact-mode .compact-task {font-size:13px;line-height:18px;}
+.compact-mode .compact-ring,.compact-mode #compactExpand {display:none;}
+.compact-mode .compact-nav {display:flex;flex-shrink:0;gap:4px;opacity:1;}
+.compact-mode #compactSkip {opacity:1;}
+.compact-mode #compactSkip:disabled {opacity:.3;}
+.compact-mode #compactComplete {opacity:1;}
+.compact-mode #compactMenu {border-color:transparent;background:transparent;letter-spacing:1px;}
+.compact-mode .compact-progress {position:absolute;bottom:0;left:18px;right:18px;height:3px;background:var(--accent);transform-origin:left;pointer-events:none;transition:transform .3s linear;}
+.compact-add-time {border:0;background:transparent;color:var(--text);font:inherit;cursor:pointer;padding:4px;flex-shrink:0;}
+.compact-add-time:disabled {opacity:.3;cursor:default;}
+.compact-mode .compact-add-time {display:none;}
+.compact-mode .compact-bar:hover .compact-add-time,.compact-mode .compact-bar:focus-within .compact-add-time {display:block;}
+.compact-mode.compact-timer-only .compact-task,.compact-mode.compact-timer-only #compactComplete {display:none;}
+.compact-mode.compact-empty #compactComplete,.compact-mode.compact-empty .compact-add-time {display:none;}
+.compact-mode.compact-empty .compact-task {display:block;}
+.compact-mode.compact-timer-only.compact-empty .compact-task {font-size:11px;}
+.compact-mode button:focus-visible,.compact-mode a:focus-visible {outline:2px solid var(--accent);outline-offset:2px;}
+
+.compact-mode .toast-container,.compact-mode .rollover-prompt {display:none;}
+.compact-mode .compact-status {max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.compact-mode.compact-timer-only.compact-empty .compact-time-group {display:none;}
+
+/* Keep hover controls from stealing room from the task name. */
+.compact-mode .compact-add-time {display:block;visibility:hidden;}
+.compact-mode .compact-bar:hover .compact-add-time,.compact-mode .compact-bar:focus-within .compact-add-time {visibility:visible;}
+.compact-mode.compact-empty .compact-add-time {display:none;}
+.compact-mode:not(.compact-timer-only) .compact-task {white-space:normal;overflow-wrap:anywhere;overflow-y:auto;text-overflow:clip;max-height:calc(100vh - 36px);}

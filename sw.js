@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 // Keep in lockstep with the visible "Version N" line in index.html's settings.
-const CACHE_VERSION = 'focus-v11';
+const CACHE_VERSION = 'focus-v19';
 const SHELL_CACHE = CACHE_VERSION + '-shell';
 const ASSET_CACHE = CACHE_VERSION + '-assets';
 
@@ -22,7 +22,13 @@ const ASSET_CACHE = CACHE_VERSION + '-assets';
 const SHELL = [
   './',
   './index.html',
+  './workspace.css',
+  './workspace.js',
+  './workspace-core.js',
   './focus-sync.js',
+  './todoist-completion.js',
+  './compact.js',
+  './compact.css',
   './focus-push.js',
   './confetti.browser.min.js',
   './manifest.webmanifest',

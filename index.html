@@ -5,7 +5,7 @@
     <!-- viewport-fit=cover lets the layout reach under the notch/home indicator;
          the safe-area insets below put the padding back where it's needed.
          maximum-scale stops iOS zooming the page when an input is focused. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Focus</title>
     <!-- PWA: inert in Electron (the manifest 404s harmlessly), load-bearing on iOS. -->
     <link rel="manifest" href="manifest.webmanifest">
@@ -17,7 +17,7 @@
     <meta name="theme-color" content="#f8f6f3" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
     <link rel="apple-touch-icon" href="icon-180.png">
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -660,13 +660,15 @@
         }
         html.is-web #webConfetti.firing { display: block; }
     </style>
+    <link rel="stylesheet" href="workspace.css">
+    <link rel="stylesheet" href="compact.css">
 </head>
 <body>
     <canvas id="webConfetti"></canvas>
     <div class="container">
         <!-- Compact Bar -->
         <div class="compact-bar">
-            <div class="compact-timer" id="compactTimer">25:00</div>
+            <div class="compact-timer" id="compactTimer">10:00</div>
             <div class="compact-play-wrap">
                 <button class="compact-btn play-pause" id="compactPlayPause" title="Start/Pause">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" id="compactPlayIcon"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
@@ -677,14 +679,14 @@
             </div>
             <a class="compact-task" id="compactTask" title="Open in Todoist">No task selected</a>
             <div class="compact-nav">
-                <button class="compact-btn" id="compactPrev" title="Previous task">
+                <button class="compact-btn" id="compactPrev" title="Previous task (←)" aria-label="Previous task">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                 </button>
-                <button class="compact-btn" id="compactNext" title="Next task">
+                <button class="compact-btn" id="compactNext" title="Next task (→)" aria-label="Next task">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 </button>
             </div>
-            <button class="compact-btn" id="compactSkip" title="Drop task from session">
+            <button class="compact-btn" id="compactSkip" title="Remove from this session (keeps task in Todoist)" aria-label="Remove task from session">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
             <button class="compact-btn" id="compactComplete" title="Complete task">
@@ -698,8 +700,8 @@
         <!-- Full View -->
         <div class="full-view">
             <div class="setup-screen" id="setupScreen">
-                <h1>Focus</h1>
-                <p>Connect your Todoist account to focus on one task at a time. Complete tasks here and they sync back to Todoist.</p>
+                <h1 id="settingsTitle">Focus</h1>
+                <p id="settingsDescription">Connect your Todoist account to focus on one task at a time. Complete tasks here and they sync back to Todoist.</p>
                 <div class="input-group">
                     <label for="apiToken">Todoist API Token</label>
                     <input type="password" id="apiToken" placeholder="Paste your API token here">
@@ -719,24 +721,14 @@
                         <input type="checkbox" id="pomodoroToggle">
                         <span class="toggle-slider"></span>
                     </label>
-                    <label class="toggle-row" title="When on, a task's Todoist duration presets the timer; when off, every task uses the work session length">
-                        <span>Use task time estimates</span>
-                        <input type="checkbox" id="taskDurationToggle">
-                        <span class="toggle-slider"></span>
-                    </label>
+                    <p class="toggle-hint">Timers use the task’s Todoist duration, or 10 minutes when none is set. A duration you choose in Focus takes priority.</p>
                     <label class="toggle-row" title="When on, completing a task immediately starts the countdown for the task that takes its place">
                         <span>Auto-start next task</span>
                         <input type="checkbox" id="autoStartToggle" checked>
                         <span class="toggle-slider"></span>
                     </label>
                     <div class="pomodoro-settings" id="pomodoroSettings" style="display:none;">
-                        <div class="pomodoro-duration-row">
-                            <label for="workDuration">Work session</label>
-                            <div class="duration-input-group">
-                                <input type="number" id="workDuration" min="1" max="120" value="25">
-                                <span>min</span>
-                            </div>
-                        </div>
+
                         <div class="pomodoro-duration-row">
                             <label for="shortBreakDuration">Short break</label>
                             <div class="duration-input-group">
@@ -771,7 +763,7 @@
                     </div>
                 </div>
                 <button class="connect-btn" id="connectBtn">Connect & Start Focusing</button>
-                <button class="cancel-btn hidden" id="cancelSettingsBtn">Cancel — back to tasks</button>
+                <button class="cancel-btn hidden" id="cancelSettingsBtn">Back to focus</button>
                 <div class="help-text">
                     Find your API token in Todoist: Settings → Integrations → Developer → API token.
                     <br><br>
@@ -780,7 +772,7 @@
                 <!-- Bumped with every release, in lockstep with sw.js's
                      CACHE_VERSION, so this always names the build actually
                      running on this device. -->
-                <div class="app-version">Version 11 · updated August 7, 2026</div>
+                <div class="app-version">Focus 3.0.11 · Your space for meaningful work</div>
             </div>
             <div class="focus-screen" id="focusScreen">
                 <div class="focus-header">
@@ -807,7 +799,7 @@
                             <circle class="timer-ring-track" cx="120" cy="120" r="110"/>
                             <circle class="timer-ring-progress" id="timerRingProgress" cx="120" cy="120" r="110"/>
                         </svg>
-                        <div class="timer-display" id="timerDisplay" title="Click to edit">25:00</div>
+                        <div class="timer-display" id="timerDisplay" title="Click to edit">10:00</div>
                     </div>
                     <div class="timer-controls">
                         <button class="timer-icon-btn primary" id="timerStartBtn" title="Start / pause (Space)">
@@ -841,17 +833,17 @@
             </div>
         </div>
     </div>
-    <div class="timer-edit-overlay" id="timerEditOverlay">
+    <div class="timer-edit-overlay" id="timerEditOverlay" role="dialog" aria-modal="true" aria-labelledby="timerEditTitle" tabindex="-1">
         <div class="timer-edit-modal">
-            <h3>Set Timer</h3>
+            <h3 id="timerEditTitle">Set task duration</h3>
             <div class="time-inputs">
-                <input type="number" id="timerMinutes" min="0" max="999" value="25">
+                <input type="number" id="timerMinutes" min="0" max="999" value="10" aria-label="Minutes">
                 <span>:</span>
-                <input type="number" id="timerSeconds" min="0" max="59" value="00">
+                <input type="number" id="timerSeconds" min="0" max="59" value="00" aria-label="Seconds">
             </div>
             <div class="modal-buttons">
                 <button class="modal-cancel" id="timerEditCancel">Cancel</button>
-                <button class="modal-save" id="timerEditSave">Set Timer</button>
+                <button class="modal-save" id="timerEditSave">Set duration</button>
             </div>
         </div>
     </div>
@@ -880,31 +872,25 @@
             <button class="goal-preset" data-mins="10">10m</button>
             <button class="goal-preset" data-mins="15">15m</button>
             <button class="goal-preset" data-mins="25">25m</button>
-            <button class="goal-preset" data-mins="45">45m</button>
+            <button class="goal-preset" data-mins="50">50m</button>
         </div>
         <div class="goal-pop-custom">
             <input type="number" id="popGoalMinutes" min="1" max="999" value="15">
             <span>min</span>
             <button class="goal-pop-set" id="popGoalSet">Set</button>
         </div>
-        <label class="toggle-row">
-            <span>Challenge timer</span>
-            <input type="checkbox" id="popGoalToggle">
-            <span class="toggle-slider"></span>
-        </label>
-        <button class="goal-remove hidden" id="popGoalRemove">Remove goal</button>
+        <button class="goal-remove hidden" id="popGoalRemove">Use default duration</button>
     </div>
-    <div class="shortcuts-overlay" id="shortcutsOverlay">
+    <div class="shortcuts-overlay" id="shortcutsOverlay" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle" tabindex="-1">
         <div class="shortcuts-modal">
-            <h3>Keyboard Shortcuts</h3>
+            <h3 id="shortcutsTitle">Keyboard shortcuts</h3>
             <dl class="shortcuts-list">
                 <dt><kbd>Space</kbd></dt><dd>Play / pause timer</dd>
                 <dt><kbd>Enter</kbd></dt><dd>Complete current task</dd>
                 <dt><kbd>←</kbd> <kbd>P</kbd></dt><dd>Previous task</dd>
                 <dt><kbd>→</kbd> <kbd>N</kbd></dt><dd>Next task</dd>
                 <dt><kbd>R</kbd></dt><dd>Refresh session</dd>
-                <dt><kbd>E</kbd></dt><dd>Set time goal for this task</dd>
-                <dt><kbd>G</kbd></dt><dd>Toggle this task's time goal</dd>
+                <dt><kbd>E</kbd></dt><dd>Set duration for this task</dd>
                 <dt><kbd>M</kbd></dt><dd>Toggle compact mode</dd>
                 <dt><kbd>O</kbd></dt><dd>Open task in Todoist</dd>
                 <dt><kbd>?</kbd></dt><dd>This help</dd>
@@ -931,7 +917,9 @@
     </div>
     <!-- Loaded by both builds: Electron for cross-device sync, web for sync + in-page confetti. -->
     <script src="confetti.browser.min.js"></script>
+    <script src="workspace-core.js"></script>
     <script src="focus-sync.js"></script>
+    <script src="todoist-completion.js"></script>
     <script src="focus-push.js"></script>
     <script>
         // Electron bridge (exposed by preload.js via contextBridge). Named
@@ -1012,6 +1000,7 @@
             return tasks.map(t => t.id).join(',') + '|' + currentIndex + '|' + (sessionDay || '');
         }
         function persistSession() {
+            window.refreshWorkspace?.();
             try {
                 // NOTE: writes the *stored* sessionDay, not always-today — the 45s
                 // poll persists constantly and must not erase the staleness signal.
@@ -1103,6 +1092,7 @@
             return streak;
         }
         function renderStatsToday() {
+            window.refreshWorkspace?.();
             const el = $('statsLine'); if (!el) return;
             const stats = loadStats(); const day = combinedStatsFor(localDateKey(), stats);
             const parts = [];
@@ -1156,7 +1146,7 @@
             const g = taskGoals[String(task.id)];
             return (g && Number.isFinite(g.minutes) && g.minutes > 0) ? g : null;
         }
-        function goalActive(task) { const g = goalFor(task); return !!(g && g.enabled); }
+        function goalActive(task) { return !!goalFor(task); }
         function currentTask() { return tasks[currentIndex] || null; }
 
         // ---- Actual time on task (focus_elapsed_v1) ----
@@ -1397,18 +1387,14 @@
         function applyRemoteSettings(s) {
             if (typeof s.pomodoroEnabled === 'boolean') { pomodoroEnabled = s.pomodoroEnabled; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); }
             if (typeof s.soundEnabled === 'boolean') { soundEnabled = s.soundEnabled; localStorage.setItem('sound_enabled', soundEnabled); }
-            if (typeof s.useTaskDurations === 'boolean') { useTaskDurations = s.useTaskDurations; localStorage.setItem('use_task_durations', useTaskDurations); }
             if (typeof s.autoStartNext === 'boolean') { autoStartNext = s.autoStartNext; localStorage.setItem('auto_start_next', autoStartNext); }
-            if (Number.isFinite(s.workDurationMins)) { workDurationMins = s.workDurationMins; localStorage.setItem('pomodoro_work', workDurationMins); }
             if (Number.isFinite(s.shortBreakMins)) { shortBreakMins = s.shortBreakMins; localStorage.setItem('pomodoro_short', shortBreakMins); }
             if (Number.isFinite(s.longBreakMins)) { longBreakMins = s.longBreakMins; localStorage.setItem('pomodoro_long', longBreakMins); }
             if (typeof s.selectedFilter === 'string') { selectedFilter = s.selectedFilter; localStorage.setItem('todoist_filter', selectedFilter); }
             // Reflect into the settings UI so an open panel doesn't show stale values.
             if (soundToggle) soundToggle.checked = soundEnabled;
             if (pomodoroToggle) pomodoroToggle.checked = pomodoroEnabled;
-            if (taskDurationToggle) taskDurationToggle.checked = useTaskDurations;
             if (autoStartToggle) autoStartToggle.checked = autoStartNext;
-            if (workDurationInput) workDurationInput.value = workDurationMins;
             if (shortBreakInput) shortBreakInput.value = shortBreakMins;
             if (longBreakInput) longBreakInput.value = longBreakMins;
             if (filterSelect) filterSelect.value = selectedFilter;
@@ -1573,7 +1559,7 @@
             filterSelect.value = currentValue;
         }
 
-        let timerSeconds = 25 * 60, timerInterval = null, timerRunning = false, initialTimerSeconds = 25 * 60, timerEndTime = null;
+        let timerSeconds = 10 * 60, timerInterval = null, timerRunning = false, initialTimerSeconds = 10 * 60, timerEndTime = null;
         // Overtime: a challenge-timer countdown that has passed zero and is now
         // counting up, so you can see exactly how far over your estimate you ran.
         let inOvertime = false, overtimeSeconds = 0, overtimeStart = null, overtimeInterval = null;
@@ -1583,33 +1569,34 @@
         // A Pomodoro work session that finished on a goal task, banked but not
         // yet spent: the break is owed once that task is actually completed.
         let _breakPendingTaskId = null;
+        let timerExtraSeconds = 0;
         let timerManuallySet = false; // user edited the timer — don't auto-apply task durations until it's released
         let isCompact = false;
         let pomodoroEnabled = localStorage.getItem('pomodoro_enabled') === 'true';
         let soundEnabled = localStorage.getItem('sound_enabled') !== 'false';
-        let useTaskDurations = localStorage.getItem('use_task_durations') === 'true'; // off by default: fixed work-length timer
+        // One-time transition to task-based timing for existing installations.
+        // Task estimates are always used; legacy settings cannot disable them.
+        const enableTaskDurations = localStorage.getItem('focus_task_duration_default_v1') !== 'true';
+        const useTaskDurations = true;
         let autoStartNext = localStorage.getItem('auto_start_next') !== 'false';      // ON by default: completing a task starts the successor's countdown
         let pomodoroCount = 0, isOnBreak = false;
-        let workDurationMins = parseInt(localStorage.getItem('pomodoro_work') || '25');
+        const workDurationMins = 10;
         let shortBreakMins = parseInt(localStorage.getItem('pomodoro_short') || '5');
         let longBreakMins = parseInt(localStorage.getItem('pomodoro_long') || '15');
         let WORK_DURATION = workDurationMins * 60, SHORT_BREAK = shortBreakMins * 60, LONG_BREAK = longBreakMins * 60;
         // Last-write clock for settings, so the newer device's preferences win.
         let _settingsAt = Number(localStorage.getItem('focus_settings_at') || 0);
+        if (enableTaskDurations) {
+            _settingsAt = Date.now();
+            localStorage.setItem('use_task_durations', 'true');
+            localStorage.setItem('focus_settings_at', String(_settingsAt));
+            localStorage.setItem('focus_task_duration_default_v1', 'true');
+        }
 
-        // Todoist duration ({amount, unit:'minute'|'day'}) → work seconds for the
-        // current task; falls back to the configured work duration.
-        // A task's own time goal, when switched on, outranks the Todoist
-        // duration; the configured work length remains the fallback.
+        // Explicit Focus duration, then Todoist duration, then ten minutes.
+        // Old stored defaults and toggles do not override this policy.
         function taskWorkSeconds() {
-            const task = tasks[currentIndex];
-            const g = goalFor(task);
-            if (g && g.enabled) return Math.min(g.minutes, 999) * 60;
-            if (!useTaskDurations) return WORK_DURATION;
-            const d = task && task.duration;
-            const mins = d && d.unit === 'minute' ? Number(d.amount) : NaN;
-            if (Number.isFinite(mins) && mins > 0) return Math.min(mins, 999) * 60;
-            return WORK_DURATION;
+            return FocusWorkspaceCore.estimate(tasks[currentIndex] || {id:''}, taskGoals) * 60;
         }
 
         // Force the timer back to the current task's length. Unlike
@@ -1621,7 +1608,7 @@
             exitOvertime();
             timerManuallySet = false;
             const secs = taskWorkSeconds();
-            timerSeconds = secs; initialTimerSeconds = secs;
+            timerSeconds = secs; initialTimerSeconds = secs; timerExtraSeconds = 0;
             updateTimerDisplay();
             return true;
         }
@@ -1633,7 +1620,7 @@
             if (timerSeconds !== initialTimerSeconds && timerSeconds !== 0) return;
             const secs = taskWorkSeconds();
             if (initialTimerSeconds === secs && timerSeconds === secs) return; // no churn
-            timerSeconds = secs; initialTimerSeconds = secs;
+            timerSeconds = secs; initialTimerSeconds = secs; timerExtraSeconds = 0;
             updateTimerDisplay();
         }
 
@@ -1666,7 +1653,8 @@
         }
         // Reusable ephemeral notification pill — fades in, auto-dismisses after 3s.
         let _toastTimer = null;
-        function showToast(message) {
+        function showToast(message, compactMessage = message) {
+            if (isCompact) window.showCompactNotice?.(compactMessage, message);
             const pill = $('toastPill');
             if (!pill) return;
             pill.textContent = message;
@@ -1688,6 +1676,12 @@
         }
         const wrapDigits = str => Array.from(String(str)).map(c => `<span class="digit">${c}</span>`).join('');
         const timerTextCache = new WeakMap();
+        const markupCache = new WeakMap();
+        function setCachedMarkup(el, html) {
+            if (markupCache.get(el) === html) return;
+            markupCache.set(el, html);
+            el.innerHTML = html;
+        }
         function setTimerText(el, secs, prefix = '') {
             const key = `${prefix}:${secs}`;
             if (timerTextCache.get(el) === key) return;
@@ -1707,8 +1701,9 @@
         function updateStartButton() {
             if (!timerStartBtn) return;
             timerStartBtn.classList.toggle('running', timerRunning || inOvertime);
-            timerStartBtn.title = inOvertime ? 'Stop overtime (Space)' : (timerRunning ? 'Pause (Space)' : 'Start (Space)');
-            if (timerStartIcon) timerStartIcon.innerHTML = inOvertime ? STOP_ICON_HTML : (timerRunning ? PAUSE_ICON_HTML : PLAY_ICON_HTML);
+            timerStartBtn.title = (isOnBreak ? timerRunning ? 'Pause break' : timerSeconds < initialTimerSeconds ? 'Resume break' : 'Start break' : inOvertime ? 'Finish overtime' : timerRunning ? 'Pause focus' : timerSeconds < initialTimerSeconds ? 'Resume focus' : 'Start focusing') + ' (Space)';
+            if (timerStartIcon) setCachedMarkup(timerStartIcon, inOvertime ? STOP_ICON_HTML : (timerRunning ? PAUSE_ICON_HTML : PLAY_ICON_HTML));
+            timerStartBtn.setAttribute("aria-label", timerStartBtn.title);
         }
         const skipBtn = $('skipBtn'), prevBtn = $('prevBtn'), refreshBtn = $('refreshBtn'), compactBtn = $('compactBtn'), completeBtn = $('completeBtn'), dropBtn = $('dropBtn');
         const timerEditOverlay = $('timerEditOverlay'), timerMinutesInput = $('timerMinutes');
@@ -1738,9 +1733,8 @@
         const compactPlayPause = $('compactPlayPause'), compactComplete = $('compactComplete'), compactExpand = $('compactExpand'), compactSkip = $('compactSkip');
         const compactPrev = $('compactPrev'), compactNext = $('compactNext');
         const soundToggle = $('soundToggle'), pomodoroToggle = $('pomodoroToggle'), pomodoroSettings = $('pomodoroSettings');
-        const taskDurationToggle = $('taskDurationToggle');
         const autoStartToggle = $('autoStartToggle');
-        const workDurationInput = $('workDuration'), shortBreakInput = $('shortBreakDuration'), longBreakInput = $('longBreakDuration');
+        const shortBreakInput = $('shortBreakDuration'), longBreakInput = $('longBreakDuration');
         const startBreakBtn = $('startBreakBtn'), skipBreakBtn = $('skipBreakBtn');
 
         function openTaskInTodoist(v2Id, taskId) {
@@ -1754,6 +1748,12 @@
         }
 
         async function init() {
+            if (focusBridge?.getVersion) {
+                try {
+                    const version = await focusBridge.getVersion();
+                    document.querySelector('.app-version').textContent = `Focus ${version} · Your space for meaningful work`;
+                } catch (error) { console.warn('Could not read app version', error); }
+            }
             // Restore persisted item store FIRST so allTasks is available instantly
             // (Manage Tasks opens without any network wait, even offline).
             restoreItemStore();
@@ -1796,10 +1796,8 @@
             apiTokenInput.value = apiToken;
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
-            taskDurationToggle.checked = useTaskDurations;
             autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
-            workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
             longBreakInput.value = longBreakMins;
 
@@ -1835,7 +1833,7 @@
         // Background poll: sync every 45 seconds and merge changes into the
         // session. Only re-renders the Manage Tasks list when no drag is active
         // so we don't interrupt the user mid-reorder.
-        setInterval(async () => {
+        async function refreshTaskData() {
             if (!apiToken || document.visibilityState !== 'visible') return;
             if (!await syncNow()) return;
             allTasks = Object.values(itemsById);
@@ -1852,20 +1850,14 @@
             // Midnight rollover of the stats display: reset the today line and
             // pomodoro dots when the app runs across midnight.
             if (localDateKey() !== _statsDay) { _statsDay = localDateKey(); pomodoroCount = 0; updatePomodoroDots(); renderStatsToday(); }
-            // Cross-device sync rides the same 45s cadence.
-            if (_syncReady) FocusSync.sync();
-        }, 45000);
+        }
 
-        // Cross-device pull, fast lane: while the app is on screen, read the
-        // sync blob every 15s instead of only riding the 45s task poll above.
-        // Steady-state cycles are a single GET — see the lastSeen quantization
-        // note in focus-sync.js — so this costs ~4 requests/min, and only while
-        // the window is actually visible: a hidden iOS page is frozen anyway,
-        // and a backgrounded desktop window catches up via the handlers below.
+        // One cadence: device state every 15s, task data at most every 45s.
+        // Recent foreground refreshes count toward the task deadline too.
         setInterval(() => {
-            if (!apiToken || !_syncReady) return;
-            if (document.visibilityState !== 'visible') return;
-            FocusSync.sync();
+            if (!apiToken || document.visibilityState !== 'visible') return;
+            if (_syncReady) FocusSync.sync();
+            if (Date.now() - taskSyncStatus.attemptedAt >= 45000) refreshTaskData();
         }, 15000);
 
         // ---- Sync at the moments that matter on a phone --------------------
@@ -1904,7 +1896,7 @@
         function toggleCompactMode() {
             isCompact = !isCompact;
             document.body.classList.toggle('compact-mode', isCompact);
-            if (focusBridge) focusBridge.toggleCompact(isCompact);
+            if (focusBridge) focusBridge.toggleCompact(isCompact, localStorage.getItem('focus_compact_layout'));
             updateCompactBar();
         }
 
@@ -1914,51 +1906,42 @@
 
         function updateCompactBar() {
             const shown = inOvertime ? overtimeSeconds : timerSeconds;
-            const minutes = Math.floor(shown / 60), seconds = shown % 60;
-            const prefix = inOvertime ? `<span class="digit">+</span>` : '';
-            const timeHtml = `${prefix}${wrapDigits(minutes)}<span class="colon">:</span>${wrapDigits(String(seconds).padStart(2,'0'))}`;
-            compactTimer.innerHTML = isOnBreak ? `☕ ${timeHtml}` : timeHtml;
+            setTimerText(compactTimer, shown, isOnBreak ? "☕ " : inOvertime ? "+" : "");
             compactTimer.classList.toggle('running', timerRunning || inOvertime);
-            compactTimer.classList.remove('warning', 'danger', 'finished', 'break-mode', 'overtime');
-            if (inOvertime) compactTimer.classList.add('overtime');
-            else if (isOnBreak) compactTimer.classList.add('break-mode');
-            else if (timerSeconds === 0) compactTimer.classList.add('finished');
-            else if (timerSeconds <= 60) compactTimer.classList.add('danger');
-            else if (timerSeconds <= warnThresholdSecs()) compactTimer.classList.add('warning');
+            const visualState = inOvertime ? 'overtime' : isOnBreak ? 'break-mode' : timerSeconds === 0 ? 'finished' : timerSeconds <= 60 ? 'danger' : timerSeconds <= warnThresholdSecs() ? 'warning' : '';
+            for (const name of ['warning','danger','finished','break-mode','overtime']) compactTimer.classList.toggle(name, name === visualState);
 
             compactPlayPause.classList.toggle('active', timerRunning || inOvertime);
             const playIcon = $('compactPlayIcon');
             if (inOvertime) {
-                playIcon.innerHTML = STOP_ICON_HTML;
+                setCachedMarkup(playIcon, STOP_ICON_HTML);
             } else if (timerRunning) {
-                playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16" fill="currentColor"/><rect x="14" y="4" width="4" height="16" fill="currentColor"/>';
+                setCachedMarkup(playIcon, PAUSE_ICON_HTML);
             } else {
-                playIcon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/>';
+                setCachedMarkup(playIcon, PLAY_ICON_HTML);
             }
 
             if (tasks.length > 0 && tasks[currentIndex]) {
-                compactTask.textContent = tasks[currentIndex].content;
+                if (compactTask.textContent !== tasks[currentIndex].content) compactTask.textContent = tasks[currentIndex].content;
                 compactTask.onclick = () => openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id);
             } else {
-                compactTask.textContent = 'No tasks';
+                if (compactTask.textContent !== 'No tasks') compactTask.textContent = 'No tasks';
                 compactTask.onclick = null;
             }
 
+            window.refreshCompactControls?.();
             compactPrev.disabled = tasks.length <= 1;
             compactNext.disabled = tasks.length <= 1;
         }
 
         function updateTimerDisplay() {
+            window.updateWorkspaceTimer?.();
             if (inOvertime) setTimerText(timerDisplay, overtimeSeconds, '+');
             else setTimerText(timerDisplay, timerSeconds);
             timerDisplay.classList.toggle('running', timerRunning || inOvertime);
             updateStartButton();
-            timerDisplay.classList.remove('warning', 'danger', 'finished', 'break-mode', 'overtime');
-            if (inOvertime) timerDisplay.classList.add('overtime');
-            else if (isOnBreak) timerDisplay.classList.add('break-mode');
-            else if (timerSeconds === 0) timerDisplay.classList.add('finished');
-            else if (timerSeconds <= 60) timerDisplay.classList.add('danger');
-            else if (timerSeconds <= warnThresholdSecs()) timerDisplay.classList.add('warning');
+            const visualState = inOvertime ? 'overtime' : isOnBreak ? 'break-mode' : timerSeconds === 0 ? 'finished' : timerSeconds <= 60 ? 'danger' : timerSeconds <= warnThresholdSecs() ? 'warning' : '';
+            for (const name of ['warning','danger','finished','break-mode','overtime']) timerDisplay.classList.toggle(name, name === visualState);
             timerDisplay.classList.toggle('paused', !inOvertime && !timerRunning && timerSeconds > 0 && timerSeconds < initialTimerSeconds);
             updateProgressRing();
             updatePomodoroDots();
@@ -1974,11 +1957,8 @@
             const setRing = (el, circumference) => {
                 if (!el) return;
                 el.style.strokeDashoffset = circumference * (1 - progress);
-                el.classList.remove('warning', 'danger', 'break-mode');
-                if (inOvertime) el.classList.add('danger');
-                else if (isOnBreak) el.classList.add('break-mode');
-                else if (timerSeconds <= 60 && timerSeconds > 0) el.classList.add('danger');
-                else if (timerSeconds <= warnThresholdSecs() && timerSeconds > 0) el.classList.add('warning');
+                const state = inOvertime ? 'danger' : isOnBreak ? 'break-mode' : timerSeconds <= 60 && timerSeconds > 0 ? 'danger' : timerSeconds <= warnThresholdSecs() && timerSeconds > 0 ? 'warning' : '';
+                for (const name of ['warning','danger','break-mode']) el.classList.toggle(name, name === state);
             };
             setRing(timerRingProgress, RING_CIRCUMFERENCE);
             setRing(compactRingProgress, COMPACT_RING_CIRCUMFERENCE);
@@ -1993,7 +1973,7 @@
                 ? 4 : pomodoroCount % 4;
             let html = '';
             for (let i = 0; i < 4; i++) html += `<span class="pomodoro-dot${i < filled ? ' filled' : ''}"></span>`;
-            pomodoroDots.innerHTML = html;
+            setCachedMarkup(pomodoroDots, html);
         }
 
         function startTimer() {
@@ -2035,14 +2015,14 @@
         // the in-app notification and the push scheduled for the same moment, so
         // the two can never describe the same event differently.
         function timerNotificationText() {
-            const isGoalEnding = !isOnBreak && goalActive(currentTask());
+            const isGoalEnding = !isOnBreak && !!currentTask();
             const isWorkSessionEnding = pomodoroEnabled && !isOnBreak;
             const isBreakEnding = pomodoroEnabled && isOnBreak;
             if (isGoalEnding) {
                 // No break is coming — say what's actually happening.
                 const g = goalFor(currentTask());
                 return {
-                    title: `${g.minutes} min goal reached`,
+                    title: g ? `${g.minutes} min goal reached` : 'Focus time reached',
                     body: `Now counting overtime — ${tasks[currentIndex] ? tasks[currentIndex].content : 'finish when ready'}`
                 };
             }
@@ -2099,11 +2079,11 @@
         function pauseTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
         function stopTimer() { timerRunning = false; clearInterval(timerInterval); flushElapsed(); updateTimerDisplay(); cancelScheduledPush(); }
         function resetTimer() { stopTimer(); exitOvertime(); timerSeconds = initialTimerSeconds; updateTimerDisplay(); }
-        function setTimer(minutes, seconds = 0) { stopTimer(); exitOvertime(); timerSeconds = minutes * 60 + seconds; initialTimerSeconds = timerSeconds; updateTimerDisplay(); }
+        function setTimer(minutes, seconds = 0) { stopTimer(); exitOvertime(); timerSeconds = minutes * 60 + seconds; initialTimerSeconds = timerSeconds; timerExtraSeconds = 0; updateTimerDisplay(); }
 
         // ---- Overtime ----
-        // Entered only when a challenge-timer countdown reaches zero outside
-        // Pomodoro mode. Time keeps accruing against the task, so the goal
+        // Entered when any task countdown reaches zero. Time keeps accruing
+        // against the task, so the goal
         // scorecard shown at completion stays honest.
         function startOvertime() {
             const t = currentTask();
@@ -2215,16 +2195,16 @@
             const isLongBreak = pomodoroCount % 4 === 0;
             const breakDuration = isLongBreak ? LONG_BREAK : SHORT_BREAK;
             timerSeconds = breakDuration;
-            initialTimerSeconds = breakDuration;
+            initialTimerSeconds = breakDuration; timerExtraSeconds = 0;
             updateTimerDisplay();
             showBreakOverlay(isLongBreak);
         }
 
         function handleTimerComplete() {
-            // A task with a time goal never auto-breaks. The estimate running
+            // Every task continues past zero. The estimate running
             // out is information, not an interruption: the timer rolls into
             // overtime and keeps counting until the task is actually finished.
-            if (!isOnBreak && goalActive(currentTask())) {
+            if (!isOnBreak && currentTask()) {
                 if (pomodoroEnabled) {
                     // Bank the completed session now so the count and the
                     // every-4 cadence stay right; the break itself waits for
@@ -2247,7 +2227,7 @@
                 isOnBreak = false;
                 timerManuallySet = false;
                 timerSeconds = taskWorkSeconds();
-                initialTimerSeconds = timerSeconds;
+                initialTimerSeconds = timerSeconds; timerExtraSeconds = 0;
                 updateTimerDisplay();
                 hideBreakOverlay();
             } else {
@@ -2276,7 +2256,7 @@
             isOnBreak = false;
             timerManuallySet = false;
             timerSeconds = taskWorkSeconds();
-            initialTimerSeconds = timerSeconds;
+            initialTimerSeconds = timerSeconds; timerExtraSeconds = 0;
             stopTimer();
             updateTimerDisplay();
             hideBreakOverlay();
@@ -2286,13 +2266,20 @@
         // for incremental updates; falls back to a full sync on error or first run.
         // Returns true if the item store was refreshed, false on network failure
         // (or when another sync is already in flight).
+        const taskSyncStatus = { lastSuccess: 0, attemptedAt: 0, error: false };
         async function syncNow() {
             if (_syncInFlight) return false; // don't pile up parallel syncs
             _syncInFlight = true;
+            taskSyncStatus.attemptedAt = Date.now();
+            window.refreshWorkspace?.();
             try {
-                return await _doSync(syncToken || '*');
+                const ok = await _doSync(syncToken || '*');
+                taskSyncStatus.error = !ok;
+                if (ok) taskSyncStatus.lastSuccess = Date.now();
+                return ok;
             } finally {
                 _syncInFlight = false;
+                window.refreshWorkspace?.();
             }
         }
 
@@ -2312,6 +2299,7 @@
         }
 
         async function _doSync(token) {
+            const startedAtRevision = _completionRevision;
             let res, data;
             try {
                 res = await fetch('https://api.todoist.com/api/v1/sync', {
@@ -2356,6 +2344,16 @@
                 });
             }
 
+            // An older read must not undo a completion acknowledged while it
+            // was in flight. A later sync may legitimately return the next
+            // occurrence of a recurring task.
+            for (const [id, revision] of _completedDuringSync) {
+                if (revision > startedAtRevision) delete itemsById[id];
+                else _completedDuringSync.delete(id);
+            }
+            if (_completionTask && !itemsById[String(_completionTask.id)]) {
+                itemsById[String(_completionTask.id)] = _completionTask;
+            }
             syncToken = data.sync_token || syncToken;
             persistItemStore();
             _syncSucceededThisRun = true;
@@ -2489,27 +2487,36 @@
         }
 
         function clearAllSessionTasks() {
-            if (tasks.length === 0) return;
+            if (_completing || tasks.length === 0) return;
             if (!confirm(`Remove all ${tasks.length} task${tasks.length === 1 ? '' : 's'} from your session?`)) return;
+            if (!isOnBreak) {
+                if (timerRunning) pauseTimer();
+                exitOvertime();
+            }
+            _breakPendingTaskId = null;
             tasks = [];
             currentIndex = 0;
             sessionDay = localDateKey();
             persistSession();
             renderTaskList();
             renderCurrentTask();
+            if (!isOnBreak) armTimerForArrival(false, false);
             updateCompactBar();
             if (allTasks.length > 0) searchTasks(taskSearchInput.value);
         }
 
         async function addTodayTasksToSession() {
+            if (_completing || loadTodayBtn.disabled) return;
             loadTodayBtn.disabled = true;
             const originalText = loadTodayBtn.textContent;
             loadTodayBtn.textContent = 'Loading…';
             try {
                 if (allTasks.length === 0) await loadAllTasks();
+                if (_completing) return;
                 const todayTasks = allTasks
                     .filter(t => isTodayOrOverdue(t) && (!t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId))
                     .sort(todayViewOrder);
+                const wasEmpty = tasks.length === 0;
                 const existingIds = new Set(tasks.map(t => String(t.id)));
                 let added = 0;
                 for (const t of todayTasks) {
@@ -2518,7 +2525,8 @@
                 sessionDay = localDateKey();
                 persistSession();
                 renderTaskList();
-                renderCurrentTask();
+                renderCurrentTask(!wasEmpty);
+                if (wasEmpty && tasks.length && !timerRunning && !isOnBreak && !inOvertime) armTimerForArrival(false, false);
                 updateCompactBar();
                 if (taskSearchInput) searchTasks(taskSearchInput.value);
                 loadTodayBtn.textContent = added > 0 ? `Added ${added}` : 'All in session';
@@ -2527,7 +2535,7 @@
                 console.error(e);
                 loadTodayBtn.textContent = originalText;
             }
-            finally { loadTodayBtn.disabled = false; }
+            finally { if (loadTodayBtn.textContent === 'Loading…') loadTodayBtn.textContent = originalText; loadTodayBtn.disabled = false; }
         }
 
         // Resolve a saved Todoist filter's *live* query string by name
@@ -2571,6 +2579,7 @@
         const WEEKLY_PLANNER_FILTER_NAME = 'Weekly Planner';
 
         async function addWeeklyPlannerTasksToSession() {
+            if (_completing || loadPlannerBtn.disabled) return;
             loadPlannerBtn.disabled = true;
             const originalText = loadPlannerBtn.textContent;
             loadPlannerBtn.textContent = 'Loading…';
@@ -2584,6 +2593,8 @@
                 const plannerTasks = (await fetchFilterTasks(query))
                     .filter(t => !t.responsible_uid || !currentUserId || t.responsible_uid === currentUserId)
                     .sort(todayViewOrder);
+                if (_completing) return;
+                const wasEmpty = tasks.length === 0;
                 const existingIds = new Set(tasks.map(t => String(t.id)));
                 let added = 0;
                 for (const t of plannerTasks) {
@@ -2592,7 +2603,8 @@
                 sessionDay = localDateKey();
                 persistSession();
                 renderTaskList();
-                renderCurrentTask();
+                renderCurrentTask(!wasEmpty);
+                if (wasEmpty && tasks.length && !timerRunning && !isOnBreak && !inOvertime) armTimerForArrival(false, false);
                 updateCompactBar();
                 if (taskSearchInput) searchTasks(taskSearchInput.value);
                 loadPlannerBtn.textContent = added > 0 ? `Added ${added}` : 'All in session';
@@ -2602,7 +2614,7 @@
                 loadPlannerBtn.textContent = 'Error';
                 setTimeout(() => { loadPlannerBtn.textContent = originalText; }, 2000);
             }
-            finally { loadPlannerBtn.disabled = false; }
+            finally { if (loadPlannerBtn.textContent === 'Loading…') loadPlannerBtn.textContent = originalText; loadPlannerBtn.disabled = false; }
         }
 
         // Leaving a task parks its countdown. Mid-countdown (paused or running)
@@ -2614,8 +2626,8 @@
             if (!t || isOnBreak) return;
             const id = String(t.id);
             if (inOvertime) { delete taskTimeLeft[id]; persistTimeLeft(); return; }
-            if (timerSeconds > 0 && timerSeconds < initialTimerSeconds) {
-                taskTimeLeft[id] = { left: timerSeconds, initial: initialTimerSeconds };
+            if (timerSeconds > 0 && (timerSeconds < initialTimerSeconds || timerExtraSeconds > 0)) {
+                taskTimeLeft[id] = { left: timerSeconds, initial: initialTimerSeconds, base: initialTimerSeconds - timerExtraSeconds, extra: timerExtraSeconds };
             } else {
                 delete taskTimeLeft[id];
             }
@@ -2633,12 +2645,13 @@
             timerManuallySet = false;
             const t = currentTask();
             const saved = t && taskTimeLeft[String(t.id)];
-            if (saved && saved.left > 0) {
+            if (saved && Number.isFinite(saved.left) && saved.left > 0 && (saved.base ?? saved.initial) === taskWorkSeconds()) {
                 timerSeconds = Math.round(saved.left);
                 initialTimerSeconds = Math.max(Math.round(saved.initial || 0), timerSeconds);
+                timerExtraSeconds = Number(saved.extra) || 0;
             } else {
                 const secs = taskWorkSeconds();
-                timerSeconds = secs; initialTimerSeconds = secs;
+                timerSeconds = secs; initialTimerSeconds = secs; timerExtraSeconds = 0;
             }
             updateTimerDisplay();
             if (wasRunning && !breakComing && tasks.length > 0) startTimer();
@@ -2658,10 +2671,30 @@
             renderCurrentTask();
             armTimerForArrival(wasRunning, false);
         }
+        // Extend only this visit; never change the Focus goal or Todoist estimate.
+        function extendCurrentSession() {
+            if (!currentTask() || isOnBreak || inOvertime || timerSeconds <= 0) return;
+            const extra = Math.min(300, 999*60-initialTimerSeconds);
+            if (extra <= 0) return;
+            if (timerRunning) timerSeconds = Math.max(0,Math.round((timerEndTime-Date.now())/1000));
+            timerSeconds += extra; initialTimerSeconds += extra; timerExtraSeconds += extra;
+            if (timerRunning) { timerEndTime=Date.now()+timerSeconds*1000; schedulePushForTimer(); }
+            stashCurrentTaskTimer(); updateTimerDisplay();
+        }
+        function deferCurrentTask() {
+            if (_completing || tasks.length < 2) return;
+            const wasRunning = timerRunning && !isOnBreak;
+            if(wasRunning) pauseTimer();
+            stashCurrentTaskTimer();
+            const [task] = tasks.splice(currentIndex,1); tasks.push(task);
+            if(currentIndex >= tasks.length-1) currentIndex=0;
+            persistSession();renderCurrentTask();armTimerForArrival(wasRunning,false);
+        }
         function goToNextTask() { if (tasks.length > 1) switchFocusedTask((currentIndex + 1) % tasks.length); }
         function goToPrevTask() { if (tasks.length > 1) switchFocusedTask((currentIndex - 1 + tasks.length) % tasks.length); }
 
-        function renderCurrentTask() {
+        function renderCurrentTask(preserveTimer = false) {
+            window.refreshWorkspace?.();
             const ctxBar = $('taskContextBar');
             // Overtime is scoped to one task. Catch every way it can stop being
             // the current one — including a background sync pruning it after it
@@ -2671,16 +2704,16 @@
                 if (!cur || String(cur.id) !== _overtimeTaskId) { exitOvertime(); timerSeconds = initialTimerSeconds; }
             }
             if (tasks.length === 0) {
-                taskArea.innerHTML = '<div class="empty-state"><p class="empty-quote">Nothing scheduled. Take a breath.</p><button class="empty-cta" id="emptyAddBtn">Add tasks</button></div>';
+                taskArea.innerHTML = '<div class="empty-state"><p class="empty-quote">Nothing scheduled. Take a breath.</p><button class="empty-cta" id="emptyAddBtn">Add Todoist tasks</button></div>';
                 taskCounter.textContent = '';
                 if (ctxBar) ctxBar.style.display = 'none';
                 skipBtn.disabled = true; prevBtn.disabled = true; completeBtn.disabled = true; dropBtn.disabled = true;
                 updateCompactBar();
-                applyTaskDurationIfIdle();
+                if (!preserveTimer) applyTaskDurationIfIdle();
                 return;
             }
             if (ctxBar) ctxBar.style.display = 'flex';
-            skipBtn.disabled = tasks.length <= 1; prevBtn.disabled = tasks.length <= 1; completeBtn.disabled = false; dropBtn.disabled = false;
+            skipBtn.disabled = tasks.length <= 1; prevBtn.disabled = tasks.length <= 1; completeBtn.disabled = _completing; dropBtn.disabled = false;
             const task = tasks[currentIndex], project = projects[task.project_id];
             const projName = project ? project.name : 'Inbox';
             const dotColor = projectColor(project);
@@ -2699,37 +2732,27 @@
             // timer — a task goal overrides it, and then showing both is noise.
             const durHtml = (Number.isFinite(durMins) && durMins > 0 && useTaskDurations && !goalActive(task))
                 ? `<div class="task-due" title="Timer set from this task's Todoist estimate">~${durMins} min</div>` : '';
-            taskArea.innerHTML = `<div class="task-block" id="taskBlock"><div class="task-block-row"><span class="task-project-dot" style="background:${dotColor}" title="${escHtml(projName)}"></span><a class="task-content" id="taskLink" title="${escHtml(projName)} — open in Todoist">${escHtml(task.content)}</a></div>${dueText ? `<div class="task-due ${dueClass}">${dueText}</div>` : ''}${durHtml}<div>${goalChipHtml(task)}</div></div>`;
+            taskArea.innerHTML = `<div class="task-block" id="taskBlock"><div class="task-block-row"><span class="task-project-dot" style="background:${dotColor}" title="${escHtml(projName)}"></span><a class="task-content" id="taskLink" href="https://app.todoist.com/app/task/${encodeURIComponent(String(task.id))}" title="${escHtml(projName)} — open in Todoist">${escHtml(task.content)}</a></div>${dueText ? `<div class="task-due ${dueClass}">${dueText}</div>` : ''}${durHtml}<div>${goalChipHtml(task)}</div></div>`;
             $('taskLink').addEventListener('click', (e) => { e.preventDefault(); openTaskInTodoist(task.v2_id, task.id); });
             // Keep time-on-task accruing against whatever task is now showing.
             if ((timerRunning || inOvertime) && _elapsedTaskId !== String(task.id)) { flushElapsed(); beginElapsed(); }
             updateCompactBar();
-            applyTaskDurationIfIdle();
+            if (!preserveTimer) applyTaskDurationIfIdle();
         }
 
         const CLOCK_SVG = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 7v5l3 2"/></svg>';
 
-        // The chip under the current task: shows the goal and how you're doing
-        // against it. Body opens the editor, mini-switch flips it on/off.
+        // Duration is always active; editing it never requires an enable switch.
         function goalChipHtml(task) {
             const g = goalFor(task);
             if (!g) {
-                return `<div class="goal-chip unset" role="button" tabindex="0" id="goalChip" title="Set a time goal for this task (E)">${CLOCK_SVG}<span>Set time goal</span></div>`;
+                return `<div class="goal-chip unset" role="button" tabindex="0" id="goalChip" title="Set this task’s duration (E)">${CLOCK_SVG}<span>Set task duration</span></div>`;
             }
             const spent = elapsedFor(task.id);
-            const goalSecs = g.minutes * 60;
-            let state = g.enabled ? 'on' : 'off';
-            let spentHtml = '';
-            if (spent >= 30) {
-                spentHtml = `<span class="goal-spent">· ${fmtDuration(spent)} in</span>`;
-                if (g.enabled) state = spent > goalSecs ? 'over' : 'on';
-            }
-            const title = g.enabled
-                ? `Challenge timer on — ${g.minutes} min goal. Click to edit, or use the switch to turn it off.`
-                : `Time goal set to ${g.minutes} min but switched off. Click the switch to turn it on.`;
-            return `<div class="goal-chip ${state}" role="button" tabindex="0" id="goalChip" title="${escHtml(title)}">`
-                + `${CLOCK_SVG}<span>${g.minutes} min goal</span>${spentHtml}`
-                + `<span class="mini-switch${g.enabled ? ' on' : ''}" id="goalQuickToggle" title="${g.enabled ? 'Turn off' : 'Turn on'} for this task (G)"></span></div>`;
+            const state = spent > g.minutes * 60 ? 'over' : 'on';
+            const spentHtml = spent >= 30 ? `<span class="goal-spent">· ${fmtDuration(spent)} spent total</span>` : '';
+            return `<div class="goal-chip ${state}" role="button" tabindex="0" id="goalChip" title="${g.minutes} minute task duration. Click to edit.">`
+                + `${CLOCK_SVG}<span>${g.minutes} min duration</span>${spentHtml}</div>`;
         }
 
         // Patch the chip's live parts each tick instead of re-rendering the task
@@ -2743,17 +2766,17 @@
             const spent = elapsedFor(task.id);
             let spentEl = chip.querySelector('.goal-spent');
             if (spent >= 30) {
-                const label = `· ${fmtDuration(spent)} in`;
+                const label = `· ${fmtDuration(spent)} spent total`;
                 if (!spentEl) {
                     spentEl = document.createElement('span');
                     spentEl.className = 'goal-spent';
-                    chip.insertBefore(spentEl, chip.querySelector('.mini-switch'));
+                    chip.appendChild(spentEl);
                 }
                 if (spentEl.textContent !== label) spentEl.textContent = label;
             } else if (spentEl) {
                 spentEl.remove();
             }
-            const state = !g.enabled ? 'off' : (spent >= 30 && spent > g.minutes * 60 ? 'over' : 'on');
+            const state = spent >= 30 && spent > g.minutes * 60 ? 'over' : 'on';
             chip.classList.remove('on', 'off', 'over', 'unset');
             chip.classList.add(state);
         }
@@ -2761,17 +2784,39 @@
         // ---- Goal editing ----
         // Re-render every surface a goal can appear on.
         function refreshGoalViews() {
+            window.refreshWorkspace?.();
             renderCurrentTask();
             if (taskOrderOverlay.classList.contains('active')) renderTaskList();
         }
 
-        function commitGoal(task, mins, enabled) {
+        function commitGoal(task, mins) {
             const wasCurrent = currentTask() && String(currentTask().id) === String(task.id);
-            taskGoals[String(task.id)] = { minutes: mins, enabled, ts: Date.now() };
+            taskGoals[String(task.id)] = { minutes: mins, enabled: true, ts: Date.now() };
+            // A deliberate new duration supersedes any parked countdown.
+            delete taskTimeLeft[String(task.id)];
+            persistTimeLeft();
             saveGoals();
-            // The user just asked for this length, so re-arm the timer to match.
-            if (wasCurrent) armTimerForCurrentTask();
+            // A deliberate duration edit starts a new countdown of that length,
+            // preserving whether work was running. A break keeps its own timer.
+            if (wasCurrent && !isOnBreak) {
+                const resume = timerRunning || inOvertime;
+                if (timerRunning) pauseTimer();
+                armTimerForCurrentTask();
+                if (resume) startTimer();
+            }
             refreshGoalViews();
+        }
+
+        // Presets and the custom timer editor select a persistent task duration.
+        // Breaks and a timer with no selected task remain standalone timers.
+        function selectTaskDuration(minutes, seconds = 0) {
+            const total = minutes * 60 + seconds;
+            if (!Number.isFinite(total) || total <= 0 || total > 999 * 60 || seconds < 0 || seconds >= 60) return false;
+            if (timerRunning || inOvertime) return false;
+            const task = currentTask();
+            if (task && !isOnBreak) commitGoal(task, total / 60, true);
+            else { timerManuallySet = true; setTimer(minutes, seconds); }
+            return true;
         }
 
         function deleteGoal(task) {
@@ -2784,15 +2829,14 @@
 
         // A new goal starts from the Todoist estimate when there is one.
         function goalSeedMinutes(task) {
-            const durMins = task.duration && task.duration.unit === 'minute' ? Number(task.duration.amount) : NaN;
-            return Number.isFinite(durMins) && durMins > 0 ? Math.min(durMins, 999) : 15;
+            return FocusWorkspaceCore.estimate(task, {});
         }
 
         // ---- Goal popover — the one goal editor ----
         // Anchored to whatever opened it: a Manage Tasks row's clock button or
         // the main screen's goal chip.
         const goalPopover = $('goalPopover'), popGoalMinutes = $('popGoalMinutes');
-        const popGoalToggle = $('popGoalToggle'), popGoalRemove = $('popGoalRemove'), popGoalSet = $('popGoalSet');
+        const popGoalRemove = $('popGoalRemove'), popGoalSet = $('popGoalSet');
         let _popTaskId = null, _popDirty = false, _popSameAnchor = false;
 
         function popTask() { return _popTaskId === null ? null : tasks.find(t => String(t.id) === _popTaskId) || null; }
@@ -2808,7 +2852,6 @@
             _popTaskId = String(task.id);
             _popDirty = false;
             const g = goalFor(task);
-            popGoalToggle.checked = g ? !!g.enabled : true;
             popGoalMinutes.value = g ? g.minutes : goalSeedMinutes(task);
             popGoalRemove.classList.toggle('hidden', !g);
             syncPopPresets();
@@ -2837,14 +2880,14 @@
         function closeGoalPopover(save) {
             if (!goalPopover.classList.contains('active')) return;
             const task = popTask();
-            if (save && _popDirty && task) commitGoal(task, popMinutes(), popGoalToggle.checked);
+            if (save && _popDirty && task) commitGoal(task, popMinutes());
             goalPopover.classList.remove('active');
             _popTaskId = null; _popDirty = false;
         }
 
         function savePopoverAndClose() {
             const task = popTask();
-            if (task) commitGoal(task, popMinutes(), popGoalToggle.checked);
+            if (task) commitGoal(task, popMinutes());
             closeGoalPopover(false);
         }
 
@@ -2857,16 +2900,6 @@
         popGoalMinutes.addEventListener('input', () => { _popDirty = true; syncPopPresets(); });
         popGoalMinutes.addEventListener('keydown', e => {
             if (e.key === 'Enter') { e.preventDefault(); savePopoverAndClose(); }
-        });
-        // The switch applies immediately — the row updates while the popover
-        // stays open for further tweaks.
-        popGoalToggle.addEventListener('change', () => {
-            const task = popTask();
-            if (!task) return;
-            commitGoal(task, popMinutes(), popGoalToggle.checked);
-            _popDirty = false;
-            popGoalRemove.classList.remove('hidden');
-            showToast(popGoalToggle.checked ? `Challenge timer on — ${popMinutes()} min` : 'Challenge timer off');
         });
         popGoalRemove.addEventListener('click', () => {
             const task = popTask();
@@ -2896,24 +2929,10 @@
         // The anchor row scrolls out from under the popover — just settle up.
         taskList.addEventListener('scroll', () => closeGoalPopover(true));
 
-        // Quick on/off from the chip's mini-switch or the G shortcut. With no
-        // goal yet there's nothing to toggle, so open the editor instead.
-        function toggleGoalForTask(index) {
-            const task = tasks[index];
-            if (!task) return;
-            const g = goalFor(task);
-            if (!g) { editGoalForCurrent(); return; }
-            taskGoals[String(task.id)] = { ...g, enabled: !g.enabled, ts: Date.now() };
-            saveGoals();
-            if (index === currentIndex) armTimerForCurrentTask();
-            refreshGoalViews();
-            showToast(!g.enabled ? `Challenge timer on — ${g.minutes} min` : 'Challenge timer off');
-        }
-
         // Scorecard shown when a task with an active goal is completed.
         function goalOutcome(task) {
             const g = goalFor(task);
-            if (!g || !g.enabled) return null;
+            if (!g) return null;
             const spent = elapsedFor(task.id);
             if (spent < 30) return null; // never really timed — nothing honest to say
             const diff = g.minutes * 60 - spent;
@@ -2927,133 +2946,99 @@
             };
         }
 
-        // Guard: Enter auto-repeat / double-press must not complete two tasks
+        // Keep the queue durable until Todoist acknowledges this exact command.
+        // The helper reuses its saved command UUID after an interrupted request.
         let _completing = false;
-        async function completeTask() {
-            if (_completing || tasks.length === 0) return;
-            _completing = true;
-            const task = tasks[currentIndex];
-            const savedIndex = currentIndex;
-            const block = $('taskBlock');
-            const wasLastTask = tasks.length === 1;
-            // Score against the time goal before any state is torn down.
-            const outcome = goalOutcome(task);
-            if (savedIndex === currentIndex) exitOvertime();
-            flushElapsed();
-            // The countdown belonged to the task just checked off — freeze it
-            // now; it re-arms for the successor once the swap animation lands.
-            const wasRunning = timerRunning;
-            if (wasRunning) stopTimer();
-            const breakComing = pomodoroEnabled && _breakPendingTaskId === String(task.id);
-
-            // Optimistic: animate out, remove from queue and item store immediately.
-            if (block) block.classList.add('completing');
-            completeBtn.disabled = true;
-
-            tasks.splice(savedIndex, 1);
-            if (currentIndex >= tasks.length && tasks.length > 0) currentIndex = 0;
-            delete itemsById[String(task.id)];
-            persistItemStore();
-            persistSession();
-
-            if (wasLastTask) fireConfetti();
-            // Completion hands the countdown to the successor. With auto-start
-            // on, it begins ticking even if the old timer was paused or idle —
-            // unless the optimistic close already rolled back (offline), where
-            // starting a timer on the task you failed to complete would be odd.
-            let rolledBack = false;
-            setTimeout(() => {
-                renderCurrentTask();
-                armTimerForArrival((wasRunning || autoStartNext) && !rolledBack, breakComing);
-                _completing = false;
-            }, 280);
-
-            // Fire the network call in the background — re-insert on failure.
-            try {
-                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${apiToken}` }
-                });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                // Log only after Todoist confirms the close — the rollback path
-                // below then never needs to decrement anything.
-                const day = bumpStat('tasksCompleted', 1);
-                if (outcome) {
-                    if (outcome.beat) bumpStat('goalsBeaten', 1);
-                    showToast(outcome.beat ? `${outcome.message} 🎉` : outcome.message);
-                } else if (day.tasksCompleted === 1) {
-                    const streak = computeStreak(loadStats());
-                    if (streak >= 2) showToast(`${streak}-day streak`);
-                }
-                // The task is closed for good — stop carrying its goal/elapsed.
-                clearTaskTracking(task.id);
-                // The break its overtime deferred is now due.
-                if (_breakPendingTaskId === String(task.id)) {
-                    _breakPendingTaskId = null;
-                    if (pomodoroEnabled) beginBreak();
-                }
-            } catch (e) {
-                // Restore task at its original position (clamped to current length).
-                rolledBack = true;
-                const restoreAt = Math.min(savedIndex, tasks.length);
-                tasks.splice(restoreAt, 0, task);
-                currentIndex = restoreAt;
-                itemsById[String(task.id)] = task;
-                persistItemStore();
-                persistSession();
-                _completing = false;
-                renderCurrentTask();
-                // A countdown that already started for the successor belongs to
-                // no one now — freeze it and re-arm for the restored task.
-                if (timerRunning) stopTimer();
-                armTimerForArrival(false, false);
-                showToast("Couldn't complete — task restored");
-            }
-        }
-
-        // Complete any row in the Manage Tasks list, not just the focused task.
-        // Delegates to completeTask() when it IS the focused one so the timer,
-        // overtime, goal scorecard and confetti all behave exactly as normal.
-        async function completeTaskAt(index, btn) {
-            if (index < 0 || index >= tasks.length) return;
-            if (index === currentIndex) { await completeTask(); renderTaskList(); return; }
-
-            const task = tasks[index];
-            if (btn) btn.disabled = true;
-
-            // Optimistic removal, mirroring completeTask()'s ordering.
-            tasks.splice(index, 1);
-            // Keep the focused task focused: indices above the removed row shift down.
-            if (currentIndex > index) currentIndex--;
-            if (_breakPendingTaskId === String(task.id)) _breakPendingTaskId = null;
-            delete itemsById[String(task.id)];
-            persistItemStore();
-            persistSession();
+        let _completionTask = null;
+        let _completionRevision = 0;
+        const _completedDuringSync = new Map();
+        const todoistCompletion = FocusTodoistCompletion.create({
+            fetch: (...args) => window.fetch(...args), storage: localStorage,
+            timeoutMs: 15000, uuid: () => crypto.randomUUID()
+        });
+        function refreshCompletionControls() {
+            completeBtn.disabled = _completing || !tasks.length;
+            dropBtn.disabled = _completing || !tasks.length;
+            completeBtn.setAttribute('aria-busy', String(_completing));
+            const label = completeBtn.querySelector('span');
+            if (label) label.textContent = _completing ? 'Completing in Todoist…' : 'Complete task';
             renderTaskList();
-            renderCurrentTask();
-            updateCompactBar();
+            window.refreshWorkspace?.();
+            window.refreshCompactControls?.();
+        }
+        async function completeTask() {
+            return completeTaskAt(currentIndex);
+        }
+        async function completeTaskAt(index) {
+            if (_completing || index < 0 || index >= tasks.length) return;
+            const task = tasks[index], id = String(task.id);
+            const startedFocused = currentTask() && String(currentTask().id) === id;
+            const wasRunning = startedFocused && timerRunning && !isOnBreak;
+            const outcome = goalOutcome(task);
+            _completing = true;
+            _completionTask = task;
+            if (startedFocused && !isOnBreak) {
+                exitOvertime();
+                if (timerRunning) pauseTimer();
+                flushElapsed();
+                stashCurrentTaskTimer();
+            }
+            refreshCompletionControls();
+            showToast('Completing in Todoist…', 'Saving…');
 
+            let resolvedId;
             try {
-                const res = await fetch(`https://api.todoist.com/api/v1/tasks/${task.id}/close`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${apiToken}` }
-                });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                bumpStat('tasksCompleted', 1);
+                resolvedId = await todoistCompletion.close(task, apiToken);
+            } catch (error) {
+                _completing = false;
+                _completionTask = null;
+                refreshCompletionControls();
+                showToast(FocusTodoistCompletion.messageForError(error), 'Not saved');
+                return;
+            }
+
+            // Only remote failures above can keep a task pending. A local UI or
+            // statistics failure after this point must never restore a closed task.
+            _completionTask = null;
+            try {
+            const revision = ++_completionRevision;
+            for (const key of new Set([id, String(resolvedId)])) {
+                _completedDuringSync.set(key, revision);
+                delete itemsById[key];
+            }
+            allTasks = allTasks.filter(t => String(t.id) !== id && String(t.id) !== String(resolvedId));
+            const focusedId = currentTask() && String(currentTask().id);
+            const removingFocused = focusedId === id;
+            const wasLastTask = tasks.length === 1 && removingFocused;
+            const breakComing = pomodoroEnabled && _breakPendingTaskId === id;
+            if (removingFocused && !isOnBreak) {
+                if (timerRunning) pauseTimer();
+                exitOvertime();
+            }
+            const removeAt = tasks.findIndex(t => String(t.id) === id);
+            if (removeAt >= 0) tasks.splice(removeAt, 1);
+            if (removingFocused) currentIndex = removeAt >= 0 && removeAt < tasks.length ? removeAt : 0;
+            else if (focusedId) currentIndex = Math.max(0, tasks.findIndex(t => String(t.id) === focusedId));
+            persistItemStore();
+            persistSession();
+            try {
                 clearTaskTracking(task.id);
-                showToast(`Completed — ${task.content.length > 34 ? task.content.slice(0, 34) + '…' : task.content}`);
-            } catch (e) {
-                // Put it back where it was so a flaky network can't silently eat a task.
-                const restoreAt = Math.min(index, tasks.length);
-                tasks.splice(restoreAt, 0, task);
-                if (currentIndex >= restoreAt) currentIndex++;
-                itemsById[String(task.id)] = task;
-                persistItemStore();
-                persistSession();
-                renderTaskList();
-                renderCurrentTask();
-                updateCompactBar();
-                showToast("Couldn't complete — task restored");
+                bumpStat('tasksCompleted', 1);
+                if (outcome?.beat) bumpStat('goalsBeaten', 1);
+            } catch (error) { console.warn('Completion saved; local tracking update failed'); }
+            _completing = false;
+            renderCurrentTask();
+            if (removingFocused) armTimerForArrival(wasRunning || autoStartNext, breakComing);
+            if (_breakPendingTaskId === id) {
+                _breakPendingTaskId = null;
+                if (breakComing && removingFocused) beginBreak();
+            }
+            refreshCompletionControls();
+            showToast(task.due?.is_recurring ? 'Completed in Todoist — next occurrence scheduled' : 'Completed in Todoist', task.due?.is_recurring ? 'Done · repeats' : 'Saved ✓');
+            if (wasLastTask) fireConfetti();
+            } finally {
+                _completing = false;
+                refreshCompletionControls();
             }
         }
 
@@ -3063,7 +3048,7 @@
         }
 
         function removeTaskFromSession(index) {
-            if (tasks.length === 0 || index < 0 || index >= tasks.length) return;
+            if (_completing || tasks.length === 0 || index < 0 || index >= tasks.length) return;
             const removingFocused = index === currentIndex;
             let wasRunning = false;
             if (removingFocused) {
@@ -3081,10 +3066,28 @@
             if (currentIndex >= tasks.length && tasks.length > 0) currentIndex = tasks.length - 1;
             if (tasks.length === 0) currentIndex = 0;
             persistSession();
-            renderCurrentTask();
+            renderCurrentTask(!removingFocused);
             if (removingFocused) armTimerForArrival(wasRunning, false);
             updateCompactBar();
             if (taskOrderOverlay.classList.contains('active')) renderTaskList();
+        }
+
+        // Order changes preserve the focused task and its exact running,
+        // paused, break or overtime state. Only explicit navigation re-arms it.
+        function moveSessionTask(id, toIndex) {
+            if (_completing || tasks.length < 2 || !Number.isFinite(toIndex)) return false;
+            const fromIndex = tasks.findIndex(task => String(task.id) === String(id));
+            const destination = Math.max(0, Math.min(tasks.length - 1, Math.trunc(toIndex)));
+            if (fromIndex < 0 || fromIndex === destination) return false;
+            const focusedId = currentTask() && String(currentTask().id);
+            const [task] = tasks.splice(fromIndex, 1);
+            tasks.splice(destination, 0, task);
+            currentIndex = focusedId ? Math.max(0, tasks.findIndex(item => String(item.id) === focusedId)) : 0;
+            persistSession();
+            renderCurrentTask(true);
+            updateCompactBar();
+            if (taskOrderOverlay.classList.contains('active')) renderTaskList();
+            return true;
         }
 
         // Static HTML fragments — built once, reused every render
@@ -3157,7 +3160,11 @@
             renderCurrentTask();
         }
 
+        let taskListSignature = '';
         function renderTaskList() {
+            const signature = JSON.stringify([tasks, currentIndex, taskGoals, projects, _completing]);
+            if (signature === taskListSignature) return;
+            taskListSignature = signature;
             const divider = document.getElementById('sessionDivider');
             if (divider) divider.textContent = tasks.length > 0 ? `Current Session (${tasks.length})` : 'Current Session';
 
@@ -3174,12 +3181,12 @@
                     ? `<span class="task-item-labels">${task.labels.map(l => `<span class="task-label-pill">${escHtml(l)}</span>`).join('')}</span>`
                     : '';
                 const g = goalFor(task);
-                const goalCls = g ? (g.enabled ? ' on' : ' paused') : '';
+                const goalCls = g ? ' on' : '';
                 const goalTitle = g
-                    ? (g.enabled ? `Challenge timer on — ${g.minutes} min goal` : `${g.minutes} min goal (switched off)`)
-                    : 'Set a time goal';
+                    ? `${g.minutes} minute task duration`
+                    : 'Set task duration';
                 const goalBtn = `<button class="task-goal-btn${goalCls}" title="${escHtml(goalTitle)}">${CLOCK_SVG}${g ? `<span>${g.minutes}</span>` : ''}</button>`;
-                return `<div class="task-item${i === currentIndex ? ' current' : ''}" draggable="${TOUCH_DRAG ? 'false' : 'true'}" data-index="${i}">${DONE_BTN_HTML}${DRAG_HANDLE_HTML}<span class="task-item-content">${escHtml(task.content)}</span>${labelsHtml}<span class="task-item-project">${projectName}</span>${goalBtn}${REMOVE_BTN_HTML}</div>`;
+                return `<div class="task-item${i === currentIndex ? ' current' : ''}" draggable="${TOUCH_DRAG ? 'false' : 'true'}" data-index="${i}">${_completing ? DONE_BTN_HTML.replace('<button ', '<button disabled ') : DONE_BTN_HTML}${DRAG_HANDLE_HTML}<span class="task-item-content">${escHtml(task.content)}</span>${labelsHtml}<span class="task-item-project">${projectName}</span>${goalBtn}${REMOVE_BTN_HTML}</div>`;
             }).join('');
         }
 
@@ -3359,8 +3366,11 @@
         }
 
         function renderSearchResults(results) {
+            const selectedId = searchResults.querySelector('.keyboard-selected')?.dataset.taskId;
+            const scroll = searchResults.scrollTop;
+            const existing = new Map(Array.from(searchResults.children, el => [el.dataset.taskId, el]));
+            const keep = new Set();
             selectedSearchIndex = -1;
-            searchResults.innerHTML = '';
             
             if (results.length === 0) {
                 searchResults.innerHTML = '<div class="search-empty">No tasks found</div>';
@@ -3372,7 +3382,9 @@
             results.forEach(task => {
                 const project = projects[task.project_id];
                 const inSession = sessionIds.has(task.id);
-                const item = document.createElement('div');
+                const item = existing.get(String(task.id)) || document.createElement('div');
+                item.dataset.taskId = String(task.id);
+                keep.add(item);
                 item.className = `search-result-item${inSession ? ' in-session' : ''}`;
                 
                 let metaText = project ? project.name : 'Inbox';
@@ -3389,41 +3401,58 @@
                 const labelsHtml = (task.labels && task.labels.length)
                     ? `<span class="search-result-labels">${task.labels.map(l => `<span class="task-label-pill">${escHtml(l)}</span>`).join('')}</span>`
                     : '';
-                item.innerHTML = `
+                const markup = `
                     <span class="search-result-content">${escHtml(task.content)}${labelsHtml}</span>
                     <span class="search-result-meta">${escHtml(metaText)}</span>
                     ${inSession ? '<span class="search-result-add" style="color:var(--text-secondary);">✓</span>' : '<span class="search-result-add">+</span>'}
                 `;
                 
-                if (!inSession) {
-                    item.addEventListener('click', () => addTaskToSession(task));
-                }
-                
-                searchResults.appendChild(item);
+                if (item._markup !== markup) { item.innerHTML = markup; item._markup = markup; }
+                item.onclick = inSession ? null : () => addTaskToSession(task);
+                const position = keep.size - 1;
+                if (searchResults.children[position] !== item) searchResults.insertBefore(item, searchResults.children[position] || null);
+                if (!inSession && String(task.id) === selectedId) item.classList.add('keyboard-selected');
             });
+            for (const child of Array.from(searchResults.children)) if (!keep.has(child)) child.remove();
+            selectedSearchIndex = Array.from(searchResults.querySelectorAll('.search-result-item:not(.in-session)')).findIndex(el => el.dataset.taskId === selectedId);
+            searchResults.scrollTop = scroll;
         }
 
-        function addTaskToSession(task) {
-            if (tasks.some(t => t.id === task.id)) return;
+        function addTaskToSession(task, focusSearch = true) {
+            if (_completing || tasks.some(t => String(t.id) === String(task.id))) return;
+            const wasEmpty = tasks.length === 0;
             tasks.push(task);
+            if (wasEmpty) currentIndex = 0;
             sessionDay = localDateKey();
             persistSession();
             renderTaskList();
             searchTasks(taskSearchInput.value);
             updateCompactBar();
-            renderCurrentTask();
-            taskSearchInput.focus();
-            taskSearchInput.select();
+            renderCurrentTask(!wasEmpty);
+            if (wasEmpty && !timerRunning && !isOnBreak && !inOvertime) armTimerForArrival(false, false);
+            if (focusSearch) { taskSearchInput.focus(); taskSearchInput.select(); }
         }
 
         function showLoading() { taskArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>'; }
         function showFocusScreen() { setupScreen.classList.add('hidden'); focusScreen.classList.add('active'); }
-        function showSetupScreen() { setupScreen.classList.remove('hidden'); focusScreen.classList.remove('active'); }
+        function showSetupScreen() {
+            setupScreen.classList.remove('hidden'); focusScreen.classList.remove('active');
+            $('settingsTitle').textContent = apiToken ? 'Settings' : 'Focus';
+            $('settingsDescription').textContent = apiToken
+                ? 'Switches and task source save automatically. Save to apply connection and break duration changes.'
+                : 'Connect your Todoist account to focus on one task at a time. Complete tasks here and they sync back to Todoist.';
+            connectBtn.textContent = apiToken ? 'Save settings' : 'Connect & Start Focusing';
+        }
 
         connectBtn.addEventListener('click', async () => {
             const token = apiTokenInput.value.trim(); if (!token) { alert('Please enter your API token'); return; }
-            connectBtn.disabled = true; connectBtn.textContent = 'Connecting...';
+            const firstConnection = !apiToken;
+            const tokenChanged = token !== apiToken;
+            connectBtn.disabled = true; connectBtn.textContent = tokenChanged ? 'Connecting…' : 'Saving…';
             try {
+                // Editing preferences must also work offline. Only a new token
+                // needs a connection check, and only first setup arms a timer.
+                if (tokenChanged) {
                 const res = await fetch('https://api.todoist.com/api/v1/projects', { headers: { 'Authorization': `Bearer ${token}` } });
                 if (res.status === 401 || res.status === 403) {
                     alert('Invalid API token. Please check your token and try again.');
@@ -3433,13 +3462,15 @@
                     alert(`Connection failed (${res.status}): ${res.statusText}`);
                     return;
                 }
+                }
                 apiToken = token; selectedFilter = filterSelect.value;
-                if (focusBridge) { await focusBridge.setToken(apiToken); } else { localStorage.setItem('todoist_api_token', apiToken); }
+                if (tokenChanged) {
+                    if (focusBridge) { await focusBridge.setToken(apiToken); } else { localStorage.setItem('todoist_api_token', apiToken); }
+                }
                 localStorage.setItem('todoist_filter', selectedFilter);
                 // Save pomodoro settings
-                workDurationMins = parseInt(workDurationInput.value) || 25;
-                shortBreakMins = parseInt(shortBreakInput.value) || 5;
-                longBreakMins = parseInt(longBreakInput.value) || 15;
+                shortBreakMins = Math.max(1, Math.min(30, parseInt(shortBreakInput.value) || 5));
+                longBreakMins = Math.max(1, Math.min(60, parseInt(longBreakInput.value) || 15));
                 localStorage.setItem('pomodoro_work', workDurationMins);
                 localStorage.setItem('pomodoro_short', shortBreakMins);
                 localStorage.setItem('pomodoro_long', longBreakMins);
@@ -3457,32 +3488,36 @@
                     timerManuallySet = false;
                     if (timerRunning) stopTimer(); // the running countdown was the break's
                     hideBreakOverlay();
+                    armTimerForArrival(false, false);
                 }
                 // Task estimate wins when present; work duration is the fallback —
                 // arm via taskWorkSeconds() so the display shows the value that
                 // will actually be used (applyTaskDurationIfIdle agrees).
-                if (!isOnBreak) { const secs = taskWorkSeconds(); timerSeconds = secs; initialTimerSeconds = secs; updateTimerDisplay(); }
-                showFocusScreen(); restoreSession(); renderCurrentTask(); updateCompactBar();
-                loadProjects().then(() => renderCurrentTask());
-                loadAllTasks();
+                if (firstConnection) { restoreSession(); armTimerForArrival(false, false); }
+                showFocusScreen(); renderCurrentTask(true); updateCompactBar();
+                if (tokenChanged) {
+                    loadProjects().then(() => renderCurrentTask(true));
+                    loadAllTasks();
+                }
+                if (!firstConnection) settingsBtn.focus();
             } catch (e) { alert('Network error: Could not connect to Todoist. Check your internet connection.'); console.error(e); }
-            finally { connectBtn.disabled = false; connectBtn.textContent = 'Connect & Start Focusing'; }
+            finally { connectBtn.disabled = false; connectBtn.textContent = apiToken ? 'Save settings' : 'Connect & Start Focusing'; }
         });
 
         settingsBtn.addEventListener('click', () => {
             // Render from cached projects instantly; refresh in the background.
+            apiTokenInput.value = apiToken;
             populateFilterSelect();
             filterSelect.value = selectedFilter;
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
-            taskDurationToggle.checked = useTaskDurations;
             autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
-            workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
             longBreakInput.value = longBreakMins;
             cancelSettingsBtn.classList.toggle('hidden', !apiToken);
             showSetupScreen();
+            cancelSettingsBtn.focus();
             loadProjects().then(() => { filterSelect.value = selectedFilter; });
         });
 
@@ -3493,13 +3528,12 @@
             filterSelect.value = selectedFilter;
             soundToggle.checked = soundEnabled;
             pomodoroToggle.checked = pomodoroEnabled;
-            taskDurationToggle.checked = useTaskDurations;
             autoStartToggle.checked = autoStartNext;
             pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none';
-            workDurationInput.value = workDurationMins;
             shortBreakInput.value = shortBreakMins;
             longBreakInput.value = longBreakMins;
             showFocusScreen();
+            settingsBtn.focus();
         });
         // Esc on the setup screen also cancels (only if already authenticated).
         document.addEventListener('keydown', e => {
@@ -3519,12 +3553,40 @@
         }
         soundToggle.addEventListener('change', () => { soundEnabled = soundToggle.checked; localStorage.setItem('sound_enabled', soundEnabled); stampSettings(); });
         pomodoroToggle.addEventListener('change', () => { pomodoroEnabled = pomodoroToggle.checked; localStorage.setItem('pomodoro_enabled', pomodoroEnabled); pomodoroSettings.style.display = pomodoroEnabled ? 'block' : 'none'; updatePomodoroDots(); stampSettings(); });
-        taskDurationToggle.addEventListener('change', () => { useTaskDurations = taskDurationToggle.checked; localStorage.setItem('use_task_durations', useTaskDurations); applyTaskDurationIfIdle(); stampSettings(); });
         autoStartToggle.addEventListener('change', () => { autoStartNext = autoStartToggle.checked; localStorage.setItem('auto_start_next', autoStartNext); stampSettings(); });
 
-        // Keyboard shortcuts overlay
-        function openShortcuts() { shortcutsOverlay.classList.add('active'); }
-        function closeShortcuts() { shortcutsOverlay.classList.remove('active'); }
+        // Existing utility dialogs share Escape, focus trapping and focus
+        // return with the native workspace picker. Background controls are inert.
+        const utilityDialogs = [timerEditOverlay, shortcutsOverlay];
+        const utilityReturnFocus = new WeakMap();
+        function openUtilityDialog(overlay, initialFocus, opener) {
+            utilityReturnFocus.set(overlay, opener || document.activeElement);
+            overlay.classList.add('active');
+            document.querySelector('.container').inert = true;
+            (initialFocus || overlay).focus();
+        }
+        function closeUtilityDialog(overlay) {
+            if (!overlay.classList.contains('active')) return;
+            overlay.classList.remove('active');
+            document.querySelector('.container').inert = utilityDialogs.some(item => item.classList.contains('active'));
+            const opener = utilityReturnFocus.get(overlay);
+            if (opener?.isConnected) opener.focus();
+        }
+        document.addEventListener('keydown', e => {
+            const overlay = utilityDialogs.find(item => item.classList.contains('active'));
+            if (!overlay) return;
+            if (e.key === 'Escape') {
+                e.preventDefault(); e.stopImmediatePropagation(); closeUtilityDialog(overlay); return;
+            }
+            if (e.key !== 'Tab') return;
+            const controls = Array.from(overlay.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]')).filter(item => item.getClientRects().length);
+            const first = controls[0], last = controls[controls.length - 1];
+            if (!first) { e.preventDefault(); overlay.focus(); }
+            else if (e.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+        }, true);
+        function openShortcuts() { openUtilityDialog(shortcutsOverlay, closeShortcutsBtn, shortcutsBtn); }
+        function closeShortcuts() { closeUtilityDialog(shortcutsOverlay); }
         shortcutsBtn.addEventListener('click', openShortcuts);
         closeShortcutsBtn.addEventListener('click', closeShortcuts);
         closeShortcutsBtn.addEventListener('pointerup', closeShortcuts);
@@ -3546,14 +3608,12 @@
         // Click on the ring (anywhere except the time text) toggles play/pause.
         const timerRingWrap = document.querySelector('.timer-ring-wrap');
         if (timerRingWrap) timerRingWrap.addEventListener('click', togglePlayPause);
-        timerDisplay.addEventListener('click', (e) => { e.stopPropagation(); if (inOvertime) { stopOvertime(); return; } if (timerRunning) return; timerMinutesInput.value = Math.floor(timerSeconds / 60); timerSecondsInput.value = (timerSeconds % 60).toString().padStart(2, '0'); timerEditOverlay.classList.add('active'); timerMinutesInput.focus(); timerMinutesInput.select(); });
+        timerDisplay.addEventListener('click', (e) => { e.stopPropagation(); if (inOvertime) { stopOvertime(); return; } if (timerRunning) return; timerMinutesInput.value = Math.floor(timerSeconds / 60); timerSecondsInput.value = (timerSeconds % 60).toString().padStart(2, '0'); $('timerEditTitle').textContent = isOnBreak ? 'Set break duration' : currentTask() ? 'Set task duration' : 'Set timer duration'; openUtilityDialog(timerEditOverlay, timerMinutesInput, timerDisplay); timerMinutesInput.select(); });
         completeBtn.addEventListener('click', completeTask);
         dropBtn.addEventListener('click', skipTaskFromSession);
         // Delegated handlers for controls inside taskArea (re-rendered each time).
         taskArea.addEventListener('click', e => {
             if (e.target.closest('#emptyAddBtn')) { reorderBtn.click(); return; }
-            // The mini-switch flips the goal in place; the rest of the chip edits it.
-            if (e.target.closest('#goalQuickToggle')) { e.stopPropagation(); toggleGoalForTask(currentIndex); return; }
             if (e.target.closest('#goalChip')) editGoalForCurrent();
         });
         taskArea.addEventListener('keydown', e => {
@@ -3566,9 +3626,15 @@
             editGoalForCurrent();
         });
 
-        timerEditCancel.addEventListener('click', () => timerEditOverlay.classList.remove('active'));
-        timerEditSave.addEventListener('click', () => { timerManuallySet = true; setTimer(parseInt(timerMinutesInput.value) || 0, parseInt(timerSecondsInput.value) || 0); timerEditOverlay.classList.remove('active'); });
-        timerEditOverlay.addEventListener('click', e => { if (e.target === timerEditOverlay) timerEditOverlay.classList.remove('active'); });
+        timerEditCancel.addEventListener('click', () => closeUtilityDialog(timerEditOverlay));
+        timerEditSave.addEventListener('click', () => {
+            if (!selectTaskDuration(Number(timerMinutesInput.value), Number(timerSecondsInput.value))) {
+                showToast('Choose a duration from 1 second to 999 minutes. Pause the timer first.');
+                return;
+            }
+            closeUtilityDialog(timerEditOverlay);
+        });
+        timerEditOverlay.addEventListener('click', e => { if (e.target === timerEditOverlay) closeUtilityDialog(timerEditOverlay); });
         reorderBtn.addEventListener('click', () => {
             taskSearchInput.value = '';
             renderTaskList();
@@ -3681,6 +3747,7 @@
         apiTokenInput.addEventListener('keypress', e => { if (e.key === 'Enter') connectBtn.click(); });
         document.addEventListener('keydown', e => {
             // Esc closes the shortcuts overlay regardless of focus context
+            if (document.querySelector('#workspaceDialog[open]')) return;
             if (e.key === 'Escape' && shortcutsOverlay.classList.contains('active')) {
                 e.preventDefault(); closeShortcuts(); return;
             }
@@ -3700,6 +3767,8 @@
                 return;
             }
             if (!focusScreen.classList.contains('active') || timerEditOverlay.classList.contains('active') || taskOrderOverlay.classList.contains('active') || shortcutsOverlay.classList.contains('active') || goalPopover.classList.contains('active')) return;
+            if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+            if (e.target.closest('button, a, [role="button"]') && (e.key === 'Enter' || e.code === 'Space')) return;
             if (e.key === '?' && e.target.tagName !== 'INPUT') { e.preventDefault(); openShortcuts(); return; }
             if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); togglePlayPause(); }
             else if (e.code === 'Enter' && e.target.tagName !== 'INPUT') { e.preventDefault(); completeTask(); }
@@ -3709,10 +3778,11 @@
             else if (e.code === 'KeyM' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleCompactMode(); }
             else if (e.code === 'KeyO' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) openTaskInTodoist(tasks[currentIndex].v2_id, tasks[currentIndex].id); }
             else if (e.code === 'KeyE' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) editGoalForCurrent(); }
-            else if (e.code === 'KeyG' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (tasks.length > 0) toggleGoalForTask(currentIndex); }
         });
         // Screen routing is handled inside init() after the token loads asynchronously.
-        init();
     </script>
+    <script src="workspace.js"></script>
+    <script src="compact.js"></script>
+    <script>init();</script>
 </body>
 </html>

@@ -7,7 +7,7 @@ const path = require('path');
 
 const SRC = path.join(__dirname, '..');
 const DEST = path.join(__dirname, 'app');
-const FILES = ['index.html', 'focus-sync.js', 'focus-push.js', 'confetti.browser.min.js'];
+const FILES = ['index.html', 'workspace.css', 'workspace.js', 'workspace-core.js', 'compact.js', 'compact.css', 'focus-sync.js', 'todoist-completion.js', 'focus-push.js', 'confetti.browser.min.js'];
 
 fs.mkdirSync(DEST, { recursive: true });
 for (const f of FILES) {

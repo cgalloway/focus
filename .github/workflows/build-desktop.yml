@@ -1,7 +1,7 @@
 # Builds the macOS desktop app on GitHub's mac runners and publishes the DMG
 # to a fixed "desktop-latest" release, so installing Focus is just: download,
 # open, drag to Applications. Re-runs whenever the desktop shell changes; app
-# features don't need a rebuild at all (the shell loads the deployed site).
+# source changes also rebuild the bundled interface.
 name: Build desktop DMG
 
 on:
@@ -10,6 +10,11 @@ on:
     branches: [main]
     paths:
       - 'desktop/**'
+      - 'index.html'
+      - 'workspace*'
+      - 'focus-sync.js'
+      - 'focus-push.js'
+      - 'confetti.browser.min.js'
       - '.github/workflows/build-desktop.yml'
 
 permissions:
@@ -27,7 +32,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: desktop
-        run: npm install
+        run: npm ci
 
       - name: Build DMG (universal — Apple Silicon + Intel)
         working-directory: desktop
@@ -53,6 +58,6 @@ jobs:
             Right-click Focus.app → **Open** → **Open**. (On newer macOS: System
             Settings → Privacy & Security → **Open Anyway**.)
 
-            The app loads the deployed Focus web app on launch, so it keeps
-            itself up to date — you should never need to download this again.
+            The app includes its interface for reliable offline startup.
+            Download the latest release to receive interface updates.
           files: desktop/dist/*.dmg
