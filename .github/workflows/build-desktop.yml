@@ -11,10 +11,8 @@ on:
     paths:
       - 'desktop/**'
       - 'index.html'
-      - 'workspace*'
-      - 'focus-sync.js'
-      - 'focus-push.js'
-      - 'confetti.browser.min.js'
+      - '*.js'
+      - '*.css'
       - '.github/workflows/build-desktop.yml'
 
 permissions:

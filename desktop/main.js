@@ -4,7 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 
-// The deployed web app — must match the URL the iPhone build is served from.
+// The origin the bundled interface is served at. It must stay the URL of the
+// deployed web app: local storage (settings, session, sync identity) is keyed
+// to this origin, so changing it would orphan existing data.
 const APP_URL = 'https://cgalloway.github.io/focus/';
 
 const NORMAL = { width: 1120, height: 820, minWidth: 380, minHeight: 600 };
@@ -280,7 +282,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
-    const bundled = new Set(['index.html', 'workspace.css', 'workspace.js', 'workspace-core.js', 'compact.js', 'compact.css', 'focus-sync.js', 'todoist-completion.js', 'focus-push.js', 'confetti.browser.min.js']);
+    const bundled = new Set(require('./app-files.js'));
     protocol.handle('https', request => {
       const url = new URL(request.url);
       if (url.origin === new URL(APP_URL).origin && url.pathname.startsWith('/focus/')) {

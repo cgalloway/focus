@@ -435,9 +435,6 @@
         .empty-quote { font-family: 'Instrument Serif', serif; font-style: italic; font-size: clamp(1.1rem, 2.4vh, 1.5rem); color: var(--text); margin-bottom: 1.25rem; line-height: 1.5; }
         .empty-cta { padding: 0.55rem 1.1rem; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); border-radius: 999px; cursor: pointer; font-family: inherit; font-size: 0.85rem; transition: color 0.2s, border-color 0.2s; -webkit-app-region: no-drag; }
         .empty-cta:hover { color: var(--accent); border-color: var(--accent); }
-        .loading { display: flex; justify-content: center; padding: 4rem; }
-        .spinner { width: 32px; height: 32px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
         .filter-section { margin-bottom: 1.5rem; }
         .filter-section select { width: 100%; padding: 0.875rem 1rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; font-family: inherit; background: white; cursor: pointer; }
         .filter-section select:focus { outline: none; border-color: var(--accent); }
@@ -1588,7 +1585,6 @@
         let _settingsAt = Number(localStorage.getItem('focus_settings_at') || 0);
         if (enableTaskDurations) {
             _settingsAt = Date.now();
-            localStorage.setItem('use_task_durations', 'true');
             localStorage.setItem('focus_settings_at', String(_settingsAt));
             localStorage.setItem('focus_task_duration_default_v1', 'true');
         }
@@ -3433,7 +3429,6 @@
             if (focusSearch) { taskSearchInput.focus(); taskSearchInput.select(); }
         }
 
-        function showLoading() { taskArea.innerHTML = '<div class="loading"><div class="spinner"></div></div>'; }
         function showFocusScreen() { setupScreen.classList.add('hidden'); focusScreen.classList.add('active'); }
         function showSetupScreen() {
             setupScreen.classList.remove('hidden'); focusScreen.classList.remove('active');
@@ -3471,7 +3466,6 @@
                 // Save pomodoro settings
                 shortBreakMins = Math.max(1, Math.min(30, parseInt(shortBreakInput.value) || 5));
                 longBreakMins = Math.max(1, Math.min(60, parseInt(longBreakInput.value) || 15));
-                localStorage.setItem('pomodoro_work', workDurationMins);
                 localStorage.setItem('pomodoro_short', shortBreakMins);
                 localStorage.setItem('pomodoro_long', longBreakMins);
                 WORK_DURATION = workDurationMins * 60; SHORT_BREAK = shortBreakMins * 60; LONG_BREAK = longBreakMins * 60;

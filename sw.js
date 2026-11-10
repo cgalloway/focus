@@ -13,12 +13,11 @@
  * deletes every older cache.
  * ------------------------------------------------------------------------- */
 
-// Keep in lockstep with the visible "Version N" line in index.html's settings.
 const CACHE_VERSION = 'focus-v19';
 const SHELL_CACHE = CACHE_VERSION + '-shell';
-const ASSET_CACHE = CACHE_VERSION + '-assets';
 
-// Relative URLs so this works under a GitHub Pages project subpath.
+// Relative URLs so this works under a GitHub Pages project subpath. Every file
+// in desktop/app-files.js must be listed here (desktop/test/app-files.test.js).
 const SHELL = [
   './',
   './index.html',
@@ -51,7 +50,7 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => k !== SHELL_CACHE && k !== ASSET_CACHE).map(k => caches.delete(k))
+        keys.filter(k => k !== SHELL_CACHE).map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );
@@ -117,36 +116,21 @@ self.addEventListener('fetch', event => {
   // Never intercept the API. See the note at the top of this file.
   if (url.hostname === 'api.todoist.com' || url.hostname === 'todoist.com') return;
 
-  const isSameOrigin = url.origin === self.location.origin;
+  // The app loads nothing else cross-origin, so only the shell is handled here.
+  if (url.origin !== self.location.origin) return;
 
   // App shell: network-first so a redeploy is picked up on the next launch,
   // falling back to cache when offline. (Cache-first would strand the user on
   // an old build until the cache version changed.)
-  if (isSameOrigin) {
-    event.respondWith(
-      fetch(req)
-        .then(res => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(SHELL_CACHE).then(c => c.put(req, copy)).catch(() => {});
-          }
-          return res;
-        })
-        .catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
-    );
-    return;
-  }
-
-  // Cross-origin GETs — in practice Google Fonts. Cache-first so the app looks
-  // right offline; opaque responses are fine to store, we just can't inspect them.
   event.respondWith(
-    caches.match(req).then(hit => {
-      if (hit) return hit;
-      return fetch(req).then(res => {
-        const copy = res.clone();
-        caches.open(ASSET_CACHE).then(c => c.put(req, copy)).catch(() => {});
+    fetch(req)
+      .then(res => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(SHELL_CACHE).then(c => c.put(req, copy)).catch(() => {});
+        }
         return res;
-      }).catch(() => hit);
-    })
+      })
+      .catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
   );
 });
