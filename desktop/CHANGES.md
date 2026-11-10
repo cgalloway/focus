@@ -1,3 +1,10 @@
+## 3.0.12 — Housekeeping
+
+- Keep one shared list of bundled interface files, with a test that the service worker and index.html stay in step with it.
+- Remove an unused loading spinner and two settings that were saved but never read.
+- Drop the obsolete cross-origin font cache from the service worker.
+- No change to timer, session, sync or Todoist behavior.
+
 ## 3.0.11 — Manage the session in place
 
 - Reorder directly in the expanded session list by dragging, move-up/down buttons, or arrow keys on the handle. Preserve the current task and its countdown, overtime, or break.
