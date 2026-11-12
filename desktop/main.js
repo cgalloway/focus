@@ -20,6 +20,8 @@ let overlayWin = null;
 let normalBounds = null;  // saved when entering compact mode
 let isCompactMode = false;
 let compactBounds = null; // the user's chosen size for the minimal bar
+let compactAnchorX = null; // left edge the user chose for the bar
+let compactFittedX = null; // left edge last set by fit-compact-content
 
 // The compact bar's size/position survives relaunches.
 const statePath = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -165,6 +167,7 @@ handle('focus:open-external', (e, url) => openExternal(url));
 handle('focus:toggle-compact', (e, isCompact, layout) => {
   if (!win || isCompactMode === !!isCompact) return;
   isCompactMode = !!isCompact;
+  compactAnchorX = null;
   if (isCompact) {
     normalBounds = win.getBounds();
     compactLayout = layout === 'timer' ? 'timer' : 'task';
@@ -192,6 +195,7 @@ handle('focus:set-compact-layout', (e, layout) => {
   if (!win || !isCompactMode || !['timer','task'].includes(layout)) return;
   compactLayouts[compactLayout]=win.getBounds();
   compactLayout=layout;
+  compactAnchorX=null;
   win.setMinimumSize(layout==='timer'?400:480,80);
   win.setBounds(fitWindowBounds(compactLayouts[layout] || {...win.getBounds(),width:layout==='timer'?400:480,height:80}, {...COMPACT,minWidth:layout==='timer'?400:480,minHeight:80}));
   saveWindowState();
@@ -201,10 +205,13 @@ handle('focus:fit-compact-content', (e, requestedWidth, requestedHeight) => {
   const bounds=win.getBounds(), area=screen.getDisplayMatching(bounds).workArea;
   const width=Math.min(area.width,Math.max(compactLayout==='timer'?400:480,Math.ceil(requestedWidth)));
   const height=Math.min(area.height,Math.max(80,Math.ceil(requestedHeight)));
-  // Keep a right-docked pill attached to that edge as it grows or shrinks.
-  const right=area.x+area.width;
-  const x=Math.abs(bounds.x+bounds.width-right)<20 ? right-width : Math.min(Math.max(area.x,bounds.x),right-width);
+  // The task controls sit at the left of the pill, so keep its left edge where
+  // the user put it and let the title end grow or shrink. A title too long for
+  // the screen pushes the pill left only until a shorter one fits again.
+  if (compactAnchorX === null || bounds.x !== compactFittedX) compactAnchorX = bounds.x;
+  const x=Math.min(Math.max(area.x,compactAnchorX),area.x+area.width-width);
   const y=Math.min(Math.max(area.y,bounds.y),area.y+area.height-height);
+  compactFittedX = x;
   if(width!==bounds.width || height!==bounds.height || x!==bounds.x || y!==bounds.y) win.setBounds({x,y,width,height});
 });
 let compactMenuWindow = null;

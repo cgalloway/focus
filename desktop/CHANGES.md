@@ -1,3 +1,10 @@
+## 3.0.13 — Compact controls stay put
+
+- Order the miniature bar as timer, play/pause, Previous, Next, Remove, Complete, then the task title, so the controls no longer shift when the title length changes.
+- Keep the pill's left edge where it was placed as it resizes; it no longer sticks to the right screen edge. A title too long for the screen moves it left only until a shorter one fits.
+- Widen the timer slot so overtime does not push the controls.
+- Smoke test: the controls hold the same screen position across a short and a long title.
+
 ## 3.0.12 — Housekeeping
 
 - Keep one shared list of bundled interface files, with a test that the service worker and index.html stay in step with it.

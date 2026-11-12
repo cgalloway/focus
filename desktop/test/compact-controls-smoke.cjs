@@ -57,6 +57,23 @@ module.exports = async win => {
   await checkVisible();
   fs.writeFileSync(path.join(os.tmpdir(),'focus-compact-controls-task.png'),(await win.webContents.capturePage()).toPNG());
 
+  // Controls precede the title, so a different title length must not move them on screen.
+  const controlPositions = async () => {
+    const lefts = await win.webContents.executeJavaScript(`['compactTimer','compactPlayPause','compactPrev','compactNext','compactSkip','compactComplete'].map(id=>Math.round(document.getElementById(id).getBoundingClientRect().left))`);
+    return {window:win.getBounds().x, lefts, width:win.getBounds().width};
+  };
+  const longTitle = await controlPositions();
+  await win.webContents.executeJavaScript(`compactNext.click()`);
+  await settle();
+  const shortTitle = await controlPositions();
+  await win.webContents.executeJavaScript(`compactPrev.click()`);
+  await settle();
+  assert.ok(shortTitle.width < longTitle.width, 'pill still resizes to the title');
+  assert.equal(shortTitle.window, longTitle.window, 'pill keeps its left edge');
+  assert.deepEqual(shortTitle.lefts, longTitle.lefts, 'controls stay put across titles');
+  assert.ok(longTitle.lefts.every((left,i,all)=>i===0 || left>all[i-1]), 'timer, play, then task controls in order');
+  assert.ok(await win.webContents.executeJavaScript(`compactComplete.getBoundingClientRect().right <= compactTask.getBoundingClientRect().left`), 'title comes after the controls');
+
   const navigation = await win.webContents.executeJavaScript(`(() => {
     timerSeconds=543;updateTimerDisplay();
     compactNext.click();

@@ -1,7 +1,7 @@
 /* Fixed-size controls and flexible task text keep the pill readable. */
 .compact-mode .compact-bar {position:relative;gap:10px;padding:0 14px 0 8px;font-size:14px;overflow:hidden; -webkit-app-region:no-drag;}
 .compact-mode .compact-grip {flex:0 0 16px;color:var(--text-secondary);cursor:grab;-webkit-app-region:drag;font-size:20px;text-align:center;}
-.compact-time-group {flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:76px;}
+.compact-time-group {flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:92px;} /* wide enough for overtime (+12:34), so the controls after it stay put */
 .compact-mode .compact-timer {font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:24px;font-weight:600;line-height:1.15;min-width:0;white-space:nowrap;}
 .compact-status {font-size:10px;line-height:14px;letter-spacing:.03em;color:var(--text-secondary);}
 .compact-mode .compact-play-wrap {width:32px;height:32px;}

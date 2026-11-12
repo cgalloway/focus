@@ -1,7 +1,7 @@
 {
   "name": "focus-desktop",
   "productName": "Focus",
-  "version": "3.0.12",
+  "version": "3.0.13",
   "description": "Focus — Todoist focus timer (macOS desktop shell)",
   "author": "Carl Galloway",
   "main": "main.js",
